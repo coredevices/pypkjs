@@ -6,7 +6,7 @@ from gevent.greenlet import GreenletExit
 import struct
 import websocket
 
-import pypkjs.PyV8 as v8
+import STPyV8 as v8
 from .exceptions import JSRuntimeException
 from . import events
 

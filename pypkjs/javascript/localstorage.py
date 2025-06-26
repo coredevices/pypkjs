@@ -1,7 +1,7 @@
 
 __author__ = 'katharine'
 
-import pypkjs.PyV8 as v8
+import STPyV8 as v8
 import errno
 import logging
 import os

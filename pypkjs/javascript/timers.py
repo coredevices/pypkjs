@@ -2,7 +2,7 @@
 __author__ = 'katharine'
 
 import gevent
-import pypkjs.PyV8 as v8
+import STPyV8 as v8
 
 class Timers(object):
     def __init__(self, runtime):

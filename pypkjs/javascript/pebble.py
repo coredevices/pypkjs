@@ -14,7 +14,7 @@ import traceback
 from uuid import UUID
 import urllib.request, urllib.parse, urllib.error
 
-import pypkjs.PyV8 as v8
+import STPyV8 as v8
 from libpebble2.protocol.appglance import AppGlance, AppGlanceSlice, AppGlanceSliceType
 from libpebble2.protocol.appmessage import AppMessage
 from libpebble2.protocol.blobdb import BlobDatabaseID, BlobStatus

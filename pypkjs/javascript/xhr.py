@@ -6,7 +6,7 @@ from gevent import monkey; monkey.patch_all()
 import requests
 import requests.exceptions
 
-import pypkjs.PyV8 as v8
+import STPyV8 as v8
 from . import events
 from .safe_requests import NonlocalHTTPAdapter
 from .exceptions import JSRuntimeException
