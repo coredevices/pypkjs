@@ -12,3 +12,4 @@ six==1.9.0
 websocket-client==0.32.0
 libpebble2>=0.0.20
 netaddr==0.7.18
+stpyv8==13.1.201.22
