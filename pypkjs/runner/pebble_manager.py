@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import gevent
@@ -19,7 +19,7 @@ logger = logging.getLogger("pypkjs.pebble_manager")
 class PebbleManager(object):
     def __init__(self, qemu):
         self.qemu = qemu.split(':')
-        print self.qemu
+        print(self.qemu)
         self.pebble = PebbleConnection(QemuTransport(*self.qemu), log_packet_level=logging.DEBUG)
         self.handle_start = None
         self.handle_stop = None

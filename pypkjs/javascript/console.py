@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import pypkjs.PyV8 as v8
@@ -22,12 +22,12 @@ class Console(object):
             caller_frame = frames[0]
             filename = caller_frame[1]
             line_num = caller_frame[2]
-            file_and_line = u"{}:{}".format(filename, line_num)
+            file_and_line = "{}:{}".format(filename, line_num)
         except:
-            file_and_line = u"???:?:?"
-        log_str = u' '.join([x.toString().decode('utf-8') if hasattr(x, 'toString')
+            file_and_line = "???:?:?"
+        log_str = ' '.join([x.toString().decode('utf-8') if hasattr(x, 'toString')
                                            else bytes(x).decode('utf-8') for x in params])
-        self.runtime.log_output(u"{} {}".format(file_and_line, log_str))
+        self.runtime.log_output("{} {}".format(file_and_line, log_str))
 
     def warn(self, *params):
         self.log(*params)

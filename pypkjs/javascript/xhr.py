@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 from gevent import monkey; monkey.patch_all()
@@ -171,10 +171,10 @@ class XMLHttpRequest(events.EventSourceMixin):
 
     def send(self, data=None):
         if data is not None:
-            if not isinstance(data, basestring) and str(data) == '[object ArrayBuffer]':
+            if not isinstance(data, str) and str(data) == '[object ArrayBuffer]':
                 uint8_array = self._runtime.context.locals.Uint8Array
                 data_array = uint8_array.create(uint8_array, (data,))
-                self._request.data = bytes(bytearray(data_array[str(x)] for x in xrange(data_array.length)))
+                self._request.data = bytes(bytearray(data_array[str(x)] for x in range(data_array.length)))
             else:
                 self._request.data = str(data)
         self._thread = self._runtime.group.spawn(self._do_send)
@@ -191,7 +191,7 @@ class XMLHttpRequest(events.EventSourceMixin):
         if self._response is None:
             return None
         # https://xhr.spec.whatwg.org/#the-getallresponseheaders()-method
-        return '\x0d\x0a'.join('%s\x3a\x20%s' % (k, v) for k, v in self._response.headers.iteritems())
+        return '\x0d\x0a'.join('%s\x3a\x20%s' % (k, v) for k, v in self._response.headers.items())
 
     def abort(self):
         if self._sent and self._thread is not None:

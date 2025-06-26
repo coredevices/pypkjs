@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 from peewee import *
@@ -305,7 +305,7 @@ class TimelineActionSet(object):
     def serialise_attributes(self, attributes):
         serialised = ''
         attribute_count = 0
-        for key, value in attributes.iteritems():
+        for key, value in attributes.items():
             # Lazy approach for now; there are only two attributes, and they're completely different.
             if key == 'title':
                 serialised += struct.pack("<BH%ds" % len(value), 0x01, len(value), value.encode('utf-8'))

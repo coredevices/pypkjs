@@ -1,9 +1,9 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import signal
 import webbrowser
-import BaseHTTPServer
+import http.server
 import socket
 
 from . import Runner
@@ -16,7 +16,7 @@ class TerminalRunner(Runner):
         signal.signal(signal.SIGUSR1, self.handle_sigusr)
 
     def log_output(self, message):
-        print message.encode('utf-8')
+        print(message.encode('utf-8'))
 
     def open_config_page(self, url, callback):
         port = self._find_port()
@@ -31,7 +31,7 @@ class TerminalRunner(Runner):
     def serve_page(self, port, callback):
         running = [True]
 
-        class TerminalConfigHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+        class TerminalConfigHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 path, query = self.path.split('?')
                 if path == '/close':
@@ -45,7 +45,7 @@ class TerminalRunner(Runner):
                     self.end_headers()
                     self.wfile.write("not found")
 
-        server = BaseHTTPServer.HTTPServer(('', port), TerminalConfigHandler)
+        server = http.server.HTTPServer(('', port), TerminalConfigHandler)
         while running[0]:
             server.handle_request()
 

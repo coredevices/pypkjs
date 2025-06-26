@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 from gevent import monkey; monkey.patch_all()
@@ -100,7 +100,7 @@ class WebSocket(events.EventSourceMixin):
     def send(self, data, *args):
         if self.readyState != self.OPEN:
             raise JSRuntimeException("Websocket is not open.")
-        if isinstance(data, basestring):
+        if isinstance(data, str):
             self.ws.send(data)
             return
         # yay, JavaScript
@@ -110,7 +110,7 @@ class WebSocket(events.EventSourceMixin):
         if str(data) == '[object ArrayBuffer]':
             uint8_array = self.runtime.context.locals.Uint8Array
             data_array = uint8_array.create(uint8_array, (data,))
-            self.ws.send_binary(str(bytearray(data_array[str(x)] for x in xrange(data_array.length))))
+            self.ws.send_binary(str(bytearray(data_array[str(x)] for x in range(data_array.length))))
 
     def handle_ws(self):
         try:

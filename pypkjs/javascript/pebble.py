@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import calendar
@@ -12,7 +12,7 @@ import struct
 import time
 import traceback
 from uuid import UUID
-import urllib
+import urllib.request, urllib.parse, urllib.error
 
 import pypkjs.PyV8 as v8
 from libpebble2.protocol.appglance import AppGlance, AppGlanceSlice, AppGlanceSliceType
@@ -106,12 +106,12 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
             self.pebble._send_message("APPLICATION_MESSAGE", struct.pack('<BB', 0x7F, tid))  # ACK
             return
 
-        app_keys = dict(zip(self.app_keys.values(), self.app_keys.keys()))
+        app_keys = dict(list(zip(list(self.app_keys.values()), list(self.app_keys.keys()))))
         d = self.runtime.context.eval("({})")  # This is kinda absurd.
-        for k, v in dictionary.iteritems():
+        for k, v in dictionary.items():
             if isinstance(v, int):
                 value = v
-            elif isinstance(v, basestring):
+            elif isinstance(v, str):
                 value = v
             elif isinstance(v, bytearray):
                 value = v8.JSArray(list(v))
@@ -131,8 +131,8 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def sendAppMessage(self, message, success=None, failure=None):
         self._check_ready()
         to_send = {}
-        message = {k: message[str(k)] for k in message.keys()}
-        for k, v in message.iteritems():
+        message = {k: message[str(k)] for k in list(message.keys())}
+        for k, v in message.items():
             if k in self.app_keys:
                 k = self.app_keys[k]
             try:
@@ -142,11 +142,11 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
 
         d = {}
         appmessage = AppMessage()
-        for k, v in to_send.iteritems():
+        for k, v in to_send.items():
             if isinstance(v, v8.JSArray):
                 v = list(v)
-            if isinstance(v, basestring):
-                if not isinstance(v, unicode):
+            if isinstance(v, str):
+                if not isinstance(v, str):
                     v = v.decode('utf-8')
                 v = CString(v)
             elif isinstance(v, int):
@@ -232,7 +232,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def _do_timeline_thing(self, method, topic, success, failure):
         try:
             token = self._get_timeline_token()
-            result = requests.request(method, self.runtime.runner.urls.manage_subscription % urllib.quote(topic, safe=''),
+            result = requests.request(method, self.runtime.runner.urls.manage_subscription % urllib.parse.quote(topic, safe=''),
                                       headers={'X-User-Token': token})
             result.raise_for_status()
         except (requests.RequestException, TokenException) as e:
@@ -352,7 +352,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def _time_from_js(self, js_time):
         if js_time is None:
             return 0
-        elif isinstance(js_time, basestring):
+        elif isinstance(js_time, str):
             dt = dateutil.parser.parse(js_time)
             if dt.tzinfo is None:
                 raise JSRuntimeException("Date strings without timezone information are not permitted.")

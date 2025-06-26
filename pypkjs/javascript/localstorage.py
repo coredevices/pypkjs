@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import pypkjs.PyV8 as v8
@@ -6,7 +6,7 @@ import errno
 import logging
 import os
 import os.path
-import dumbdbm  # This is the only one that actually syncs data if the process dies before I can close().
+import dbm.dumb  # This is the only one that actually syncs data if the process dies before I can close().
 logger = logging.getLogger("pypkjs.javascript.localstorage")
 
 _storage_cache = {}  # This is used when filesystem-based storage is unavailable.
@@ -23,7 +23,7 @@ class LocalStorage(object):
                     if e.errno != errno.EEXIST:
                         raise
 
-                self.storage = dumbdbm.open(os.path.join(persist_dir, 'localstorage', str(runtime.pbw.uuid)), 'c')
+                self.storage = dbm.dumb.open(os.path.join(persist_dir, 'localstorage', str(runtime.pbw.uuid)), 'c')
             except IOError:
                 pass
         if self.storage is None:
@@ -60,10 +60,10 @@ class LocalStorage(object):
             return False
 
     def keys(self, p):
-        return v8.JSArray(self.storage.keys())
+        return v8.JSArray(list(self.storage.keys()))
 
     def enumerate(self):
-        return v8.JSArray(self.storage.keys())
+        return v8.JSArray(list(self.storage.keys()))
 
     def clear(self, *args):
         self.storage.clear()
@@ -79,7 +79,7 @@ class LocalStorage(object):
 
     def key(self, index, *args):
         if len(self.storage) > index:
-            return self.storage.keys()[index]
+            return list(self.storage.keys())[index]
         else:
             return v8.JSNull()
 

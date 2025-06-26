@@ -1,11 +1,11 @@
-from __future__ import absolute_import
+
 __author__ = 'katharine'
 
 import calendar
 import dateutil.parser
 import logging
 import struct
-import urlparse
+import urllib.parse
 
 from libpebble2.protocol.timeline import TimelineAttribute
 
@@ -23,7 +23,7 @@ class TimelineAttributeSet(object):
     def serialise(self):
         serialised = []
 
-        for key, value in self.attributes.iteritems():
+        for key, value in self.attributes.items():
             if key == 'type':
                 continue
             try:
@@ -58,7 +58,7 @@ class TimelineAttributeSet(object):
         return conversion_methods[attribute_info['type']](value, attribute_info)
 
     def _uri_lookup(self, value, attribute_info):
-        url = urlparse.urlparse(value)
+        url = urllib.parse.urlparse(value)
         if url.scheme == 'system':
             if value in self.timeline.fw_map['resources']:
                 res_id = self.timeline.fw_map['resources'][value]
@@ -88,7 +88,7 @@ class TimelineAttributeSet(object):
 
     @staticmethod
     def _colour_lookup(value, attribute_info):
-        if not isinstance(value, basestring) or len(value) == 0:
+        if not isinstance(value, str) or len(value) == 0:
             return None
 
         # Try a hex colour value
