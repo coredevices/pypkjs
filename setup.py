@@ -1,10 +1,6 @@
 __author__ = 'katharine'
 
 from setuptools import setup, find_packages
-from pkg_resources import resource_string
-
-requirements_str = resource_string(__name__, 'requirements.txt')
-requirements = [line.strip() for line in requirements_str.splitlines()]
 
 __version__= None  # Overwritten by executing version.py.
 with open('pypkjs/version.py') as f:
