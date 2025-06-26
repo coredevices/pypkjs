@@ -321,4 +321,4 @@ def prepare_db(filename):
     db.init(filename)
     db.connect()
     db.execute_sql("PRAGMA foreign_keys=ON")
-    db.create_tables([TimelineItem, TimelineState, TimelineSubscription, PinTopic], True)
+    db.create_tables([TimelineItem, TimelineState, TimelineSubscription, PinTopic])
