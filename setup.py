@@ -9,9 +9,9 @@ with open('pypkjs/version.py') as f:
 setup(name='pypkjs',
       version=__version__,
       description='A Pebble phone app simulator written in Python',
-      url='https://github.com/pebble/pypkjs',
-      author='Pebble Technology Corporation',
-      author_email='katharine@pebble.com',
+      url='https://github.com/coredevices/pypkjs',
+      author='Core Devices LLC',
+      author_email='griffin@griffinli.com',
       license='MIT',
       packages=find_packages(),
       install_requires=[

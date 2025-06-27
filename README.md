@@ -6,10 +6,9 @@ PebbleKit JS in Python!
 Setup
 -----
 
-To get started clone the repo and submodules:
+To get started, clone the repo:
 
-    git clone git@github.com:pebble/pypkjs.git
-    git submodule update --init --recursive
+    git clone https://github.com/coredevices/pypkjs.git
 
 Set up a virtualenv and install everything
 
