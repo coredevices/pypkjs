@@ -84,17 +84,17 @@ class WebsocketRunner(Runner):
         self.pebble.disconnect()
 
     def log_output(self, message):
-        self.broadcast(bytearray('\x02' + message.encode('utf-8')))
+        self.broadcast(b'\x02' + message.encode('utf-8'))
 
     def open_config_page(self, url, callback):
-        self.broadcast(bytearray(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url), url)))
+        self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url), url))
         self.config_callback = callback
 
     def _handle_outbound(self, message):
-        self.broadcast(bytearray('\x01' + message))
+        self.broadcast(b'\x01' + message)
 
     def _handle_inbound(self, message):
-        self.broadcast(bytearray('\x00' + message))
+        self.broadcast(b'\x00' + message)
 
     def handle_ws(self, environ, start_response):
         if environ['PATH_INFO'] == '/':
