@@ -165,7 +165,7 @@ class WebsocketRunner(Runner):
 
     @must_auth
     def do_relay(self, ws, message):
-        self.pebble.pebble.send_raw(str(message))
+        self.pebble.pebble.send_raw(bytes(message))
 
     @must_auth
     def do_install(self, ws, message):
