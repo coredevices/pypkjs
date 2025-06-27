@@ -64,9 +64,9 @@ class WebsocketRunner(Runner):
         pebble_greenlet = self.pebble.connect()
         self.pebble.pebble.register_raw_inbound_handler(self._handle_inbound)
         self.pebble.pebble.register_raw_outbound_handler(self._handle_outbound)
-        if self.pebble.timeline_is_supported:
-            self.timeline.continuous_sync()
-            self.timeline.do_maintenance()
+        # if self.pebble.timeline_is_supported:
+        #     self.timeline.continuous_sync()
+        #     self.timeline.do_maintenance()
         logging.getLogger().addHandler(WebsocketLogHandler(self, level=logging.WARNING))
         if self.ssl_root is not None:
             ssl_args = {

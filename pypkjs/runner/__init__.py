@@ -18,10 +18,10 @@ import urllib.request, urllib.parse, urllib.error
 
 from libpebble2.util.bundle import PebbleBundle
 from libpebble2.services.appmessage import AppMessageService
-import pypkjs.javascript as javascript
-import pypkjs.javascript.runtime
+# import pypkjs.javascript as javascript
+# import pypkjs.javascript.runtime
 from .pebble_manager import PebbleManager
-from pypkjs.timeline import PebbleTimeline
+# from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
 
 
@@ -44,7 +44,7 @@ class Runner(object):
         self.running_uuid = None
         self.js = None
         self.urls = URLManager()
-        self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
+        # self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
         self.load_cached_pbws()
         self.load_pbws(pbws)
@@ -94,6 +94,8 @@ class Runner(object):
             self.stop_js()
 
     def start_js(self, pbw):
+        print('PebbleKitJS Not Yet Supported')
+        return
         self.stop_js()
         if pbw.src is None:
             return
@@ -120,9 +122,9 @@ class Runner(object):
     def run(self):
         self.logger.info('Connecting to pebble')
         greenlet = self.pebble.connect()
-        if self.pebble.timeline_is_supported:
-            self.timeline.continuous_sync()
-            self.timeline.do_maintenance()
+        # if self.pebble.timeline_is_supported:
+        #     self.timeline.continuous_sync()
+        #     self.timeline.do_maintenance()
         greenlet.join()
 
     @property
