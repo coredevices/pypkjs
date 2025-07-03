@@ -99,7 +99,7 @@ class XMLHttpRequest(events.EventSourceMixin):
         super(XMLHttpRequest, self).__init__(runtime)
 
 
-    def open(self, method, url, async=True, user=None, password=None):
+    def open(self, method, url, async_=True, user=None, password=None):
         self._request = requests.Request(method, url)
         if user is not None:
             self._request.auth = (user, password or "")
