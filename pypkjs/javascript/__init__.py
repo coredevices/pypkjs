@@ -6,9 +6,10 @@ from .performance import Performance
 from .timers import Timers
 from .localstorage import LocalStorage
 from .pebble import Pebble
-from .xhr import prepare_xhr
+from .xhr import prepare_xhr, XHRExtension
 from .navigator import Navigator
 from .ws import prepare_ws
+from .events import EventExtension
 
 
 class PebbleKitJS(object):
@@ -24,6 +25,8 @@ class PebbleKitJS(object):
             Navigator(runtime),
             Timers(runtime),
             self.pebble,
+            EventExtension(runtime),
+            XHRExtension(runtime)
         ]
 
     def do_post_setup(self):

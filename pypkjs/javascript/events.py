@@ -5,33 +5,35 @@ import STPyV8 as v8
 
 from .exceptions import JSRuntimeException
 
-event = v8.JSExtension("runtime/event", """
-    Event = function(event_type, event_init_dict) {
-        var self = this;
-        this.stopPropagation = function() {};
-        this.stopImmediatePropagation = function() { self._aborted = true; }
-        this.preventDefault = function() { self.defaultPrevented = true; }
-        this.initEvent = function(event_type, bubbles, cancelable) {
-            self.type = event_type;
-            self.bubbles = bubbles;
-            self.cancelable = cancelable
-        };
-        if(!event_init_dict) event_init_dict = {};
-
-        this.type = event_type;
-        this.bubbles = event_init_dict.bubbles || false;
-        this.cancelable = event_init_dict.cancelable || false;
-        this.defaultPrevented = false;
-        this.target = null;
-        this.currentTarget = null;
-        this.eventPhase = 2;
-        this._aborted = false;
-    };
-    Event.NONE = 0;
-    Event.CAPTURING_PHASE = 1;
-    Event.AT_TARGET = 2;
-    Event.BUBBLING_PHASE = 3;
-""")
+class EventExtension:
+    def __init__(self, runtime):
+        runtime.run_js("""
+            Event = function(event_type, event_init_dict) {
+                var self = this;
+                this.stopPropagation = function() {};
+                this.stopImmediatePropagation = function() { self._aborted = true; }
+                this.preventDefault = function() { self.defaultPrevented = true; }
+                this.initEvent = function(event_type, bubbles, cancelable) {
+                    self.type = event_type;
+                    self.bubbles = bubbles;
+                    self.cancelable = cancelable
+                };
+                if(!event_init_dict) event_init_dict = {};
+        
+                this.type = event_type;
+                this.bubbles = event_init_dict.bubbles || false;
+                this.cancelable = event_init_dict.cancelable || false;
+                this.defaultPrevented = false;
+                this.target = null;
+                this.currentTarget = null;
+                this.eventPhase = 2;
+                this._aborted = false;
+            };
+            Event.NONE = 0;
+            Event.CAPTURING_PHASE = 1;
+            Event.AT_TARGET = 2;
+            Event.BUBBLING_PHASE = 3;
+        """)
 
 Event = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Event, args)
 

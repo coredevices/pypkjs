@@ -18,8 +18,8 @@ import urllib.request, urllib.parse, urllib.error
 
 from libpebble2.util.bundle import PebbleBundle
 from libpebble2.services.appmessage import AppMessageService
-# import pypkjs.javascript as javascript
-# import pypkjs.javascript.runtime
+import pypkjs.javascript as javascript
+import pypkjs.javascript.runtime
 from .pebble_manager import PebbleManager
 # from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
@@ -94,8 +94,6 @@ class Runner(object):
             self.stop_js()
 
     def start_js(self, pbw):
-        print('PebbleKitJS Not Yet Supported')
-        return
         self.stop_js()
         if pbw.src is None:
             return

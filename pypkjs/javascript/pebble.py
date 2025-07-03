@@ -38,16 +38,19 @@ class TokenException(Exception):
 
 class Pebble(events.EventSourceMixin, v8.JSClass):
     def __init__(self, runtime, pebble):
-        self.extension = v8.JSExtension(runtime.ext_name("pebble"), """
+        # Expose this instance to runtime (JS)
+        runtime.register_syscall("__get_internal_pebble", lambda : self)
+
+        runtime.run_js("""
         Pebble = new (function() {
-            native function _internal_pebble();
-            _make_proxies(this, _internal_pebble(),
+            var _internal_pebble = exec('__get_internal_pebble', []);
+            _make_proxies(this, _internal_pebble,
                 ['sendAppMessage', 'showSimpleNotificationOnPebble', 'getAccountToken', 'getWatchToken',
                 'addEventListener', 'removeEventListener', 'openURL', 'getTimelineToken', 'timelineSubscribe',
                 'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload']);
             this.platform = 'pypkjs';
         })();
-        """, lambda f: lambda: self, dependencies=["runtime/internal/proxy"])
+        """)
         self.blobdb = pebble.blobdb
         self.pebble = pebble.pebble
         self.runtime = runtime

@@ -11,17 +11,18 @@ class Navigator(object):
         self._runtime = runtime
         self._runtime = runtime
 
-        self.extension = v8.JSExtension(runtime.ext_name("navigator"), """
+        runtime.register_syscall('__get_internal_location', lambda : Geolocation(runtime))
+
+        runtime.run_js("""
         navigator = new (function() {
-            native function _internal_location();
+            var _internal_location = exec('__get_internal_location', []);
             this.language = 'en-GB';
 
-            var location = _internal_location();
+            var location = _internal_location;
             if(true) { // TODO: this should be a check on geolocation being enabled.
                 this.geolocation = new (function() {
                     _make_proxies(this, location, ['getCurrentPosition', 'watchPosition', 'clearWatch']);
                 })();
             }
         })();
-        """, lambda f: lambda: Geolocation(runtime), dependencies=["runtime/internal/proxy"])
-
+        """)

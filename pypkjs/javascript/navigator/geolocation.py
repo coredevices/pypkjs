@@ -7,22 +7,7 @@ import requests
 import pygeoip
 import os.path
 
-position = v8.JSExtension("runtime/geolocation/position", """
-    Position = (function(coords, timestamp) {
-        this.coords = coords;
-        this.timestamp = timestamp;
-    });
-""")
-
 Position = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Position, args)
-
-coordinates = v8.JSExtension("runtime/geolocation/coordinates", """
-    Coordinates = (function(long, lat, accuracy) {
-        this.longitude = long
-        this.latitude = lat
-        this.accuracy = accuracy
-    });
-""")
 
 Coordinates = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Coordinates, args)
 
@@ -31,9 +16,24 @@ class Geolocation(object):
     def __init__(self, runtime):
         self.runtime = runtime
 
+        runtime.run_js("""
+            Position = (function(coords, timestamp) {
+                this.coords = coords;
+                this.timestamp = timestamp;
+            });
+        """)
+
+        runtime.run_js("""
+            Coordinates = (function(long, lat, accuracy) {
+                this.longitude = long
+                this.latitude = lat
+                this.accuracy = accuracy
+            });
+        """)
+
     def _get_position(self, success, failure):
         try:
-            resp = requests.get('http://ip.42.pl/raw')
+            resp = requests.get('https://api.ipify.org')
             resp.raise_for_status()
             ip = resp.text
             gi = pygeoip.GeoIP('%s/GeoLiteCity.dat' % os.path.dirname(__file__))
