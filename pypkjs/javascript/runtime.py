@@ -52,7 +52,7 @@ class JSRuntime(object):
 
     def setup(self):
         self.pjs = PebbleKitJS(self, self.qemu, persist=self.persist_dir)
-        self.context = v8.JSContext(extensions=self.pjs.get_extension_names())
+        self.context = v8.JSContext()
         with self.context:
             # Do some setup
             self.context.eval("this.toString = function() { return '[object Window]'; }")

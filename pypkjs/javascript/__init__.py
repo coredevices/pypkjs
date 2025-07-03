@@ -26,11 +26,6 @@ class PebbleKitJS(object):
             self.pebble,
         ]
 
-    def get_extension_names(self):
-        return [x.extension.name for x in self.extensions] + ["runtime/events/progress", "runtime/xhr", "runtime/ws",
-                                                              "runtime/geolocation/position",
-                                                              "runtime/geolocation/coordinates"]
-
     def do_post_setup(self):
         prepare_xhr(self.runtime)
         prepare_ws(self.runtime)
