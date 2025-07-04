@@ -30,17 +30,24 @@ class LocalStorage(object):
             logger.warning("Using transient store.")
             self.storage = _storage_cache.setdefault(str(runtime.pbw.uuid), {})
 
-        self.extension = v8.JSExtension(runtime.ext_name("localstorage"), """
+        runtime.register_syscall('__get_internal_localstorage', lambda : self)
+        runtime.run_js("""
         (function() {
-            native function _internal();
+            var _internal = exec('__get_internal_localstorage', []);
+            
+            const target = {}
+            
+            var methods = _make_proxies({}, _internal, ['clear', 'getItem', 'setItem', 'removeItem', 'key']);
 
-            var proxy = _make_proxies({}, _internal(), ['set', 'has', 'delete_', 'keys', 'enumerate']);
-            var methods = _make_proxies({}, _internal(), ['clear', 'getItem', 'setItem', 'removeItem', 'key']);
-            proxy.get = function get(p, name) { return methods[name] || _internal().get(p, name); }
+            const handler = {
+                get(target, prop, receiver) {
+                    return methods[prop]
+                }
+            }
 
-            this.localStorage = Proxy.create(proxy);
+            this.localStorage = new Proxy(target, handler);
         })();
-        """, lambda f: lambda: self, dependencies=["runtime/internal/proxy"])
+        """)
 
     def get(self, p, name):
         return self.storage.get(str(name), v8.JSNull())
