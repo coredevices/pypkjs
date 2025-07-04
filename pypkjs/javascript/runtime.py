@@ -48,7 +48,7 @@ class JSRuntime(object):
             self.context.eval("""
                 function _make_proxies(proxy, origin, names) {
                     names.forEach(function(name) {
-                        proxy[name] = function() { return origin[name].apply(origin, arguments); };
+                        proxy[name] = function(...args) { return origin[name](...args); };
                     });
                     return proxy;
                 }

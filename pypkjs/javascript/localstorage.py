@@ -34,20 +34,21 @@ class LocalStorage(object):
         runtime.run_js("""
         (function() {
             var _internal = exec('__get_internal_localstorage', []);
-            
-            const target = {}
-            
-            var methods = _make_proxies({}, _internal, ['clear', 'getItem', 'setItem', 'removeItem', 'key']);
 
             const handler = {
-                get(target, prop, receiver) {
-                    return methods[prop] || _internal.get(receiver, name)
+                get(target, property, receiver) {
+                    if (['clear', 'getItem', 'setItem', 'removeItem', 'key'].includes(property)) {
+                        return function(...args) {
+                            return _internal[property](...args);
+                        }
+                    }
+                    return _internal.get(null, property)
                 }
             }
 
             _make_proxies(handler, _internal, ['set', 'has', 'deleteProperty', 'ownKeys', 'getOwnPropertyDescriptor', 'enumerate']);
 
-            this.localStorage = new Proxy(target, handler);
+            this.localStorage = new Proxy({}, handler);
         })();
         """)
 
@@ -71,8 +72,8 @@ class LocalStorage(object):
     def ownKeys(self, target):
         return v8.JSArray(list(self.storage.keys()))
 
-    def getOwnPropertyDescriptor(self, target, property):
-        if property in self.storage:
+    def getOwnPropertyDescriptor(self, target, name):
+        if name in self.storage:
             return {
                 'enumerable': True,
                 'configurable': True
@@ -89,10 +90,10 @@ class LocalStorage(object):
         return self.get(None, name)
 
     def setItem(self, name, value, *args):
-        self.set(None, name, value)
+        self.set(None, name, value, None)
 
     def removeItem(self, name, *args):
-        return self.delete_(None, name)
+        return self.deleteProperty(None, name)
 
     def key(self, index, *args):
         if len(self.storage) > index:
