@@ -8,13 +8,17 @@ import time
 class Performance(object):
     # This is an approximation for now
     def __init__(self, runtime):
-        self.extension = v8.JSExtension(runtime.ext_name("performance"), """
+        runtime.register_syscall("__get_time", lambda : time.time())
+        runtime.run_js("""
             performance = new (function() {
-                native function _time();
+                function _time() {
+                    return exec('__get_time', []);
+                }
+            
                 var start = _time();
 
                 this.now = function() {
                     return (_time() - start) * 1000;
                 };
             })();
-        """, lambda f: lambda: time.time())
+        """)
