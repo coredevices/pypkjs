@@ -16,7 +16,7 @@ class PebbleKitJS(object):
     def __init__(self, runtime, pebble, persist=None):
         self.runtime = runtime
         self.pebble = Pebble(runtime, pebble)
-        self.local_storage = LocalStorage(runtime)
+        self.local_storage = LocalStorage(runtime, persist)
 
         self.extensions = [
             Console(runtime),
