@@ -208,7 +208,7 @@ class WebsocketRunner(Runner):
     @must_auth
     def do_qemu_command(self, ws, message):
         protocol = message[0]
-        self.pebble.pebble.transport.send_packet(str(message[1:]),
+        self.pebble.pebble.transport.send_packet(bytes(message[1:]),
                                                  target=MessageTargetQemu(protocol=protocol, raw=True))
 
     @must_auth

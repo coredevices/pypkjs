@@ -7,12 +7,15 @@ import STPyV8 as v8
 class Console(object):
     def __init__(self, runtime):
         self.runtime = runtime
-        self.extension = v8.JSExtension(self.runtime.ext_name("console"), """
+
+        runtime.register_syscall("__get_internal_console", lambda : self)
+
+        runtime.run_js("""
         console = new (function () {
-            native function _internal_console();
-            _make_proxies(this, _internal_console(), ['log', 'warn', 'info', 'error']);
+            var _internal_console = exec('__get_internal_console', []);
+            _make_proxies(this, _internal_console, ['log', 'warn', 'info', 'error']);
         })();
-        """, lambda f: lambda: self, dependencies=["runtime/internal/proxy"])
+        """)
 
     def log(self, *params):
         # kOverview == kLineNumber | kColumnOffset | kScriptName | kFunctionName
@@ -25,8 +28,13 @@ class Console(object):
             file_and_line = "{}:{}".format(filename, line_num)
         except:
             file_and_line = "???:?:?"
-        log_str = ' '.join([x.toString().decode('utf-8') if hasattr(x, 'toString')
-                                           else bytes(x).decode('utf-8') for x in params])
+
+        log_str = ' '.join([
+            x.toString() if hasattr(x, 'toString')
+            else str(x)
+            for x in params
+        ])
+
         self.runtime.log_output("{} {}".format(file_and_line, log_str))
 
     def warn(self, *params):
