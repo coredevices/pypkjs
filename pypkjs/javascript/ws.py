@@ -2,7 +2,7 @@
 __author__ = 'katharine'
 
 from gevent import monkey; monkey.patch_all()
-from gevent.greenlet import GreenletExit
+from gevent import GreenletExit
 import struct
 import websocket
 
