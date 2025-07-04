@@ -45,33 +45,41 @@ class LocalStorage(object):
                 }
             }
 
-            _make_proxies(handler, _internal, ['set', 'has', 'delete_', 'keys', 'enumerate']);
+            _make_proxies(handler, _internal, ['set', 'has', 'deleteProperty', 'ownKeys', 'getOwnPropertyDescriptor', 'enumerate']);
 
             this.localStorage = new Proxy(target, handler);
         })();
         """)
 
-    def get(self, p, name):
+    def get(self, receiver, name):
         return self.storage.get(str(name), v8.JSNull())
 
-    def set(self, p, name, value):
+    def set(self, target, name, value, receiver):
         self.storage[str(name)] = str(value)
         return True
 
-    def has(self, p, name):
+    def has(self, target, name):
         return name in self.storage
 
-    def delete_(self, p, name):
+    def deleteProperty(self, target, name):
         if name in self.storage:
             del self.storage[name]
             return True
         else:
             return False
 
-    def keys(self, p):
+    def ownKeys(self, target):
         return v8.JSArray(list(self.storage.keys()))
 
-    def enumerate(self):
+    def getOwnPropertyDescriptor(self, target, property):
+        if property in self.storage:
+            return {
+                'enumerable': True,
+                'configurable': True
+            }
+        return None
+
+    def enumerate(self, target, receiver):
         return v8.JSArray(list(self.storage.keys()))
 
     def clear(self, *args):
