@@ -41,9 +41,11 @@ class LocalStorage(object):
 
             const handler = {
                 get(target, prop, receiver) {
-                    return methods[prop]
+                    return methods[prop] || _internal.get(receiver, name)
                 }
             }
+
+            _make_proxies(handler, _internal, ['set', 'has', 'delete_', 'keys', 'enumerate']);
 
             this.localStorage = new Proxy(target, handler);
         })();
