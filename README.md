@@ -10,10 +10,10 @@ To get started, clone the repo:
 
     git clone https://github.com/coredevices/pypkjs.git
 
-Set up a virtualenv and install everything
+Set up a venv and install everything
 
-    virtualenv .env
-    source .env/bin/activate
+    python3 -m venv .venv
+    source .venv/bin/activate
     pip install -r requirements.txt
 
 Running
@@ -51,4 +51,4 @@ currently supported using the phonesim setup.
 Platforms
 -------
 
-Mac OS (10.10) and Linux are tested. Windows won't work.
+Mac OS and Linux are supported. Windows won't work.
