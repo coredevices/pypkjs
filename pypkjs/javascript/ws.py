@@ -92,7 +92,7 @@ class WebSocket(events.EventSourceMixin):
         self.protocol = None
         self.binaryType = 'arraybuffer'
 
-    def close(self, code=1000, reason="", *args):
+    def close(self, code=1000, reason=b"", *args):
         if self.readyState != self.OPEN:
             return
         self.readyState = self.CLOSING
