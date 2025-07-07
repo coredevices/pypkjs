@@ -16,8 +16,18 @@ logger = logging.getLogger('pypkjs.javascript.pebble')
 CALL_TABLE = {
 }
 
+def printify_arg(arg):
+    if arg is None:
+        return 'null'
+    if isinstance(arg, (str, int, float)):
+        return arg
+    else:
+        return repr(arg)
+
 class Global(v8.JSClass):
     def exec(self, name, args):
+        arg_str = json.dumps([printify_arg(arg) for arg in args])
+        logger.debug('SYSCALL: %s (%s) ', name, arg_str)
         try:
             return CALL_TABLE[name](*args)
         except Exception as e:
