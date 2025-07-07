@@ -6,6 +6,7 @@ import gevent
 import gevent.pool
 import gevent.queue
 import gevent.hub
+import json
 import logging
 
 from . import PebbleKitJS
