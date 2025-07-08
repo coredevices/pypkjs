@@ -2,7 +2,9 @@
 __author__ = 'katharine'
 
 import STPyV8 as v8
+import logging
 
+logger = logging.getLogger("pypkjs.javascript.console")
 
 class Console(object):
     def __init__(self, runtime):
@@ -35,6 +37,7 @@ class Console(object):
             for x in params
         ])
 
+        logger.debug("{} {}".format(file_and_line, log_str))
         self.runtime.log_output("{} {}".format(file_and_line, log_str))
 
     def warn(self, *params):
