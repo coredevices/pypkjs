@@ -104,14 +104,16 @@ class WebSocket(events.EventSourceMixin):
         if isinstance(data, str):
             self.ws.send(data)
             return
-        # yay, JavaScript
-        if str(data) in ['[object %sArray]' % x for x in ('Float32', 'Float64', 'Int16', 'Int32', 'Int8', 'Uint16',
-                                                            'Uint32', 'Uint8', 'Uint8Clamped')]:
-            data = data.buffer
-        if str(data) == '[object ArrayBuffer]':
-            uint8_array = self.runtime.context.locals.Uint8Array
+
+        array_buffer = self.runtime.context.locals.ArrayBuffer
+        uint8_array = self.runtime.context.locals.Uint8Array
+
+        if array_buffer.isView(data):
+            data_array = uint8_array.create(uint8_array, (data.buffer, data.byteOffset, data.byteLength))
+            self.ws.send_binary(bytes(data_array[str(x)] for x in range(data_array.length)))
+        elif str(data) == '[object ArrayBuffer]':
             data_array = uint8_array.create(uint8_array, (data,))
-            self.ws.send_binary(str(bytearray(data_array[str(x)] for x in range(data_array.length))))
+            self.ws.send_binary(bytes(data_array[str(x)] for x in range(data_array.length)))
 
     def handle_ws(self):
         try:
