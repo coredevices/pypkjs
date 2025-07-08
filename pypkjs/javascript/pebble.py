@@ -161,7 +161,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
                     self.runtime.log_output("WARNING: illegal float value %s for appmessage key %s" % (v, k))
                     intv = 0
                 v = Int32(intv)
-            elif isinstance(v, collections.Sequence):
+            elif isinstance(v, collections.abc.Sequence):
                 b = bytearray()
                 for byte in v:
                     if isinstance(byte, int):
