@@ -77,7 +77,12 @@ class WebSocket(events.EventSourceMixin):
         if protocols is None or protocols == v8.JSNull:
             self.protocols = None
         else:
-            self.protocols = protocols
+            # In JS, websocket protocol argument can be either a string or list
+            if isinstance(protocols, v8.JSArray):
+                self.protocols = list(protocols)
+            else:
+                self.protocols = [protocols]
+
         self.runtime.group.spawn(self.handle_ws)
         self.ws = None
 
