@@ -87,7 +87,7 @@ class WebsocketRunner(Runner):
         self.broadcast(b'\x02' + message.encode('utf-8'))
 
     def open_config_page(self, url, callback):
-        self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url), url))
+        self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url.encode('utf-8')), url.encode('utf-8')))
         self.config_callback = callback
 
     def _handle_outbound(self, message):
