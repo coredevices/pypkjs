@@ -119,6 +119,8 @@ class WebSocket(events.EventSourceMixin):
         elif str(data) == '[object ArrayBuffer]':
             data_array = uint8_array.create(uint8_array, (data,))
             self.ws.send_binary(bytes(data_array[str(x)] for x in range(data_array.length)))
+        else:
+            raise JSRuntimeException("Unsupported data - expect String, ArrayBuffer, TypedArray, or DataView.")
 
     def handle_ws(self):
         try:
