@@ -92,7 +92,7 @@ class ActionHandler(object):
                 response = requests.request(method, url, headers=headers, data=body, allow_redirects=True, timeout=2.5)
                 response.raise_for_status()
             except requests.RequestException as e:
-                logging.warning("HTTP request failed: %s", e.message)
+                logging.warning("HTTP request failed: %s", e)
                 self.send_result(item.uuid, False, {
                     'subtitle': action.get("failureText", "Failed!"),
                     'largeIcon': action.get("failureIcon", "system://images/RESULT_FAILED")
@@ -111,12 +111,12 @@ class ActionHandler(object):
         return True, {'subtitle': 'Dismissed', 'largeIcon': 'system://images/RESULT_DISMISSED'}
 
     def send_result(self, item, success, attributes=None):
-        self.logger.info("%sing %s action.", "ACK" if success else "NACK", item.uuid)
+        self.logger.info("%sing %s action.", "ACK" if success else "NACK", item)
         if attributes is None:
             attributes = {}
         attribute_set = TimelineAttributeSet(attributes, self.timeline, uuid.UUID(item.parent))
         attribute_list = attribute_set.serialise()
         response = TimelineActionEndpoint(data=ActionResponse(item_id=uuid.UUID(item.uuid), response=int(not success),
                                                               attributes=attribute_list))
-        self.logger.debug("Serialised action response: %s", response.serialise().encode('hex'))
+        self.logger.debug("Serialised action response: %s", response.serialise().hex())
         self.pebble.pebble.send_packet(response)

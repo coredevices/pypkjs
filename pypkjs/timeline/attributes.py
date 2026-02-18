@@ -35,14 +35,14 @@ class TimelineAttributeSet(object):
             if converted is None:
                 logger.warning("Couldn't convert '%s' value '%s'", key, value)
                 continue
-            logger.debug("attribute (%s, %s) -> (%s, %s)", key, value, attribute_info['id'], converted.encode('hex'))
+            logger.debug("attribute (%s, %s) -> (%s, %s)", key, value, attribute_info['id'], converted.hex())
             serialised.append(TimelineAttribute(attribute_id=attribute_info['id'], content=converted))
 
         return serialised
 
     def convert_type(self, attribute_info, value):
         conversion_methods = {
-            'string-string': lambda x, y: x.encode('utf-8')[:y.get('max_length', 64)-1] + '\x00',
+            'string-string': lambda x, y: x.encode('utf-8')[:y.get('max_length', 64)-1] + b'\x00',
             'uri-resource_id': self._uri_lookup,
             'number-uint32': lambda x, y: struct.pack('<I', x),
             'number-uint16': lambda x, y: struct.pack('<H', x),
@@ -81,8 +81,8 @@ class TimelineAttributeSet(object):
     @staticmethod
     def _serialise_string_array(value, attribute_info):
         try:
-            parts = '\x00'.join(value)
-            return struct.pack('<%ss' % len(parts), parts.encode('utf-8'))
+            parts = b'\x00'.join(x.encode('utf-8') for x in value)
+            return struct.pack('<%ds' % len(parts), parts)
         except TypeError:
             return None
 

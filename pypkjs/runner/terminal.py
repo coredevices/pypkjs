@@ -16,7 +16,7 @@ class TerminalRunner(Runner):
         signal.signal(signal.SIGUSR1, self.handle_sigusr)
 
     def log_output(self, message):
-        print(message.encode('utf-8'))
+        print(message)
 
     def open_config_page(self, url, callback):
         port = self._find_port()
@@ -37,13 +37,13 @@ class TerminalRunner(Runner):
                 if path == '/close':
                     self.send_response(200)
                     self.end_headers()
-                    self.wfile.write("ok")
+                    self.wfile.write(b"ok")
                     running[0] = False
                     callback(query)
                 else:
                     self.send_response(404)
                     self.end_headers()
-                    self.wfile.write("not found")
+                    self.wfile.write(b"not found")
 
         server = http.server.HTTPServer(('', port), TerminalConfigHandler)
         while running[0]:

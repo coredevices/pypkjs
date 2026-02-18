@@ -100,7 +100,7 @@ class JSRuntime(object):
                 self.log_output(e.stackTrace)
                 self.log_output("JS failed.")
             except Exception as e:
-                self.log_output(e.message)
+                self.log_output(str(e))
                 raise
             else:
                 self.enqueue(self.pjs.pebble._connect)

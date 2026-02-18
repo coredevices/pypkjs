@@ -303,12 +303,13 @@ class TimelineActionSet(object):
         return serialised
 
     def serialise_attributes(self, attributes):
-        serialised = ''
+        serialised = b''
         attribute_count = 0
         for key, value in attributes.items():
             # Lazy approach for now; there are only two attributes, and they're completely different.
             if key == 'title':
-                serialised += struct.pack("<BH%ds" % len(value), 0x01, len(value), value.encode('utf-8'))
+                encoded = value.encode('utf-8')
+                serialised += struct.pack("<BH%ds" % len(encoded), 0x01, len(encoded), encoded)
                 attribute_count += 1
             elif key == 'launchCode':
                 serialised += struct.pack("<BHI", 0x0d, 4, value)

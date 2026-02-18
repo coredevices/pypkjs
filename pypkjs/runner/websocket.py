@@ -149,7 +149,7 @@ class WebsocketRunner(Runner):
     @must_auth
     def do_phone_info(self, ws, message):
         try:
-            ws.send(bytearray("\x06pypkjs,0.0.0,qemu"))
+            ws.send(bytearray(b"\x06pypkjs,0.0.0,qemu"))
         except WebSocketError:
             pass
 
@@ -214,7 +214,7 @@ class WebsocketRunner(Runner):
     @must_auth
     def do_timeline_command(self, ws, message):
         command = message[0]
-        message = str(message[1:])
+        message = bytes(message[1:]).decode('utf-8')
         try:
             if command == 0x01:
                 try:
@@ -228,7 +228,7 @@ class WebsocketRunner(Runner):
                 self.timeline.handle_pin_delete({'guid': message})
         except Exception as e:
             traceback.print_exc()
-            self.log_output("Pin insert failed: %s: %s" % (type(e).__name__, e.message))
+            self.log_output("Pin insert failed: %s: %s" % (type(e).__name__, e))
             ws.send(bytearray([0x0c, 0x01]))
 
 

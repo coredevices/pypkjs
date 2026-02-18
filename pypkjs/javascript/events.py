@@ -69,7 +69,7 @@ class EventSourceMixin(object):
                 except (v8.JSError, JSRuntimeException) as e:
                     self.__runtime.log_output(e.stackTrace)
                 except Exception as e:
-                    self.__runtime.log_output(e.message)
+                    self.__runtime.log_output(str(e))
                     raise
                 finally:
                     if event._aborted:
@@ -86,7 +86,7 @@ class EventSourceMixin(object):
                 except (v8.JSError, JSRuntimeException) as e:
                     self.__runtime.log_output(e.stackTrace)
                 except Exception as e:
-                    self.__runtime.log_output(e.message)
+                    self.__runtime.log_output(str(e))
                     raise
 
         self.__runtime.enqueue(go)
