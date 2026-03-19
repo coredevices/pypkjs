@@ -204,16 +204,10 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def _get_timeline_token(self):
         if self._timeline_token is not None:
             return self._timeline_token
-        result = requests.get(self.runtime.runner.urls.sandbox_token % self.uuid,
-                              headers={'Authorization': 'Bearer %s' % self.runtime.runner.oauth_token})
-        if result.status_code == 404:
-            raise TokenException("No token available; make sure the app is timeline enabled "
-                                 "and this user authorised in the developer portal.")
-        elif result.status_code == 401:
-            raise TokenException("User login rejected; make sure you are logged in to the SDK.")
-        result.raise_for_status()
-        logger.debug("get_timeline_token result: %s", result.json())
-        self._timeline_token = result.json()['token']
+        # Return a dummy token for local timeline emulation.
+        # The original Pebble timeline servers are gone; CoreApp uses the same approach.
+        self._timeline_token = "emulated-dummy-token"
+        logger.info("Using emulated timeline token for app %s", self.uuid)
         return self._timeline_token
 
     def getTimelineToken(self, success=None, failure=None):
@@ -233,21 +227,10 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
         self.runtime.group.spawn(go)
 
     def _do_timeline_thing(self, method, topic, success, failure):
-        try:
-            token = self._get_timeline_token()
-            result = requests.request(method, self.runtime.runner.urls.manage_subscription % urllib.parse.quote(topic, safe=''),
-                                      headers={'X-User-Token': token})
-            result.raise_for_status()
-        except (requests.RequestException, TokenException) as e:
-            if callable(failure):
-                self.runtime.enqueue(failure, str(e))
-        except Exception as e:
-            traceback.print_exc()
-            if callable(failure):
-                self.runtime.enqueue(failure, "Internal failure.")
-        else:
-            if callable(success):
-                self.runtime.enqueue(success)
+        # Local emulation: subscriptions are no-ops
+        logger.info("Timeline subscription %s for topic '%s' (emulated locally)", method, topic)
+        if callable(success):
+            self.runtime.enqueue(success)
 
     def timelineSubscribe(self, topic, success=None, failure=None):
         self.runtime.group.spawn(self._do_timeline_thing, "POST", topic, success, failure)
@@ -257,21 +240,10 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
 
     def timelineSubscriptions(self, success=None, failure=None):
         def go():
-            try:
-                token = self._get_timeline_token()
-                result = requests.get(self.runtime.runner.urls.app_subscription_list, headers={'X-User-Token': token})
-                result.raise_for_status()
-                subs = v8.JSArray(result.json()['topics'])
-            except (requests.RequestException, TokenException) as e:
-                if callable(failure):
-                    self.runtime.enqueue(failure, str(e))
-            except Exception:
-                traceback.print_exc()
-                if callable(failure):
-                    self.runtime.enqueue(failure, "Internal failure.")
-            else:
-                if callable(success):
-                    self.runtime.enqueue(success, subs)
+            # Local emulation: return empty subscription list
+            subs = v8.JSArray([])
+            if callable(success):
+                self.runtime.enqueue(success, subs)
         self.runtime.group.spawn(go)
 
     def _infer_installed_platform(self):

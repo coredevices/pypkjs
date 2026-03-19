@@ -60,6 +60,9 @@ class XHRExtension:
             }
         """)
 
+_TIMELINE_API_HOSTS = {'timeline-api.rebble.io', 'timeline-api.getpebble.com'}
+
+
 class XMLHttpRequest(events.EventSourceMixin):
     UNSENT = 0
     OPENED = 1
@@ -126,8 +129,104 @@ class XMLHttpRequest(events.EventSourceMixin):
             raise Exception(exception)
         self._trigger_async_event("readystatechange")
 
+    def _is_timeline_api_request(self):
+        """Check if this request targets a timeline pin API endpoint."""
+        if self._request is None or self._request.url is None:
+            return False
+        from urllib.parse import urlparse
+        parsed = urlparse(self._request.url)
+        return (parsed.hostname in _TIMELINE_API_HOSTS
+                and parsed.path is not None
+                and parsed.path.lower().startswith('/v1/user/pins'))
+
+    def _handle_timeline_api_request(self):
+        """Handle a timeline API request locally via BlobDB instead of hitting the dead server."""
+        import json
+        import datetime
+        import uuid as uuid_mod
+        import logging
+        from urllib.parse import urlparse, unquote
+
+        tl_logger = logging.getLogger('pypkjs.javascript.xhr.timeline')
+        method = self._request.method.upper()
+        parsed = urlparse(self._request.url)
+        path = parsed.path
+
+        timeline = self._runtime.runner.timeline
+        app_uuid = str(self._runtime.runner.running_uuid)
+
+        if method in ('PUT', 'POST'):
+            body = self._request.data
+            if body is None:
+                raise Exception("No body provided for timeline pin insert")
+            pin = json.loads(body) if isinstance(body, str) else json.loads(body.decode('utf-8'))
+
+            # Extract pin_id from URL path or body
+            path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
+            if path_after_pins:
+                pin_id = unquote(path_after_pins)
+            elif 'id' in pin:
+                pin_id = str(pin['id'])
+            else:
+                raise Exception("No pin id found in URL or body")
+
+            # Convert to web pin format (same as InsertPinCommand in pebble_tool/commands/timeline.py)
+            guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+            now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            pin['guid'] = str(guid)
+            pin['createTime'] = now
+            pin['updateTime'] = now
+            pin['topicKeys'] = pin.get('topicKeys', [])
+            pin['source'] = 'sdk'
+            pin['dataSource'] = 'sandbox-uuid:%s' % app_uuid
+
+            tl_logger.info("Inserting local timeline pin '%s' (guid=%s) for app %s", pin_id, guid, app_uuid)
+            timeline.handle_pin_create(pin, manual=True)
+
+        elif method == 'DELETE':
+            path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
+            if not path_after_pins:
+                raise Exception("No pin id in DELETE URL")
+            pin_id = unquote(path_after_pins)
+            guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+            tl_logger.info("Deleting local timeline pin '%s' (guid=%s)", pin_id, guid)
+            try:
+                timeline.handle_pin_delete({'guid': str(guid)})
+            except Exception:
+                pass  # Pin may not exist, which is fine for DELETE
+
+        else:
+            raise Exception("Unsupported method %s for timeline API" % method)
+
+        # Simulate successful response
+        self.readyState = self.DONE
+        self.status = 200
+        self.statusText = 'OK'
+        self.responseText = '{}'
+        if self.responseType == "json":
+            self.response = {}
+        else:
+            self.response = self.responseText
+
     def _do_send(self):
         self._sent = True
+
+        # Intercept timeline API requests and handle locally
+        if self._is_timeline_api_request():
+            try:
+                self._handle_timeline_api_request()
+                self._trigger_async_event("load", ProgressEvent, (self._runtime,))
+            except Exception as e:
+                self.status = 500
+                self.statusText = str(e)
+                self.readyState = self.DONE
+                self.responseText = str(e)
+                self.response = self.responseText
+            finally:
+                self._trigger_async_event("loadend", ProgressEvent, (self._runtime,))
+                self._trigger_async_event("readystatechange")
+            return
+
         req = self._session.prepare_request(self._request)
         try:
             if self.timeout:
