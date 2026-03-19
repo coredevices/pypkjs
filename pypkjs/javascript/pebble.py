@@ -47,7 +47,8 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
             _make_proxies(this, _internal_pebble,
                 ['sendAppMessage', 'showSimpleNotificationOnPebble', 'getAccountToken', 'getWatchToken',
                 'addEventListener', 'removeEventListener', 'openURL', 'getTimelineToken', 'timelineSubscribe',
-                'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload']);
+                'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload',
+                'insertTimelinePin', 'deleteTimelinePin']);
             this.platform = 'pypkjs';
         })();
         """)
@@ -245,6 +246,42 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
             if callable(success):
                 self.runtime.enqueue(success, subs)
         self.runtime.group.spawn(go)
+
+    def insertTimelinePin(self, pin):
+        """Insert a timeline pin directly, without going through the timeline web API."""
+        import json
+        import datetime
+        import uuid as uuid_mod
+
+        if isinstance(pin, str):
+            pin = json.loads(pin)
+        else:
+            # Convert V8 JSObject to Python dict via JSON round-trip
+            pin = json.loads(self.runtime.context.eval("JSON.stringify")(pin))
+
+        pin_id = str(pin.get('id', uuid_mod.uuid4()))
+        guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+        now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        pin['guid'] = str(guid)
+        pin['createTime'] = now
+        pin['updateTime'] = now
+        pin['topicKeys'] = pin.get('topicKeys', [])
+        pin['source'] = 'sdk'
+        pin['dataSource'] = 'sandbox-uuid:%s' % self.uuid
+
+        logger.info("insertTimelinePin: '%s' (guid=%s) for app %s", pin_id, guid, self.uuid)
+        self.runtime.runner.timeline.handle_pin_create(pin, manual=True)
+
+    def deleteTimelinePin(self, pin_id):
+        """Delete a timeline pin directly by its ID."""
+        import uuid as uuid_mod
+
+        guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+        logger.info("deleteTimelinePin: '%s' (guid=%s)", pin_id, guid)
+        try:
+            self.runtime.runner.timeline.handle_pin_delete({'guid': str(guid)})
+        except Exception:
+            pass  # Pin may not exist
 
     def _infer_installed_platform(self):
         available_prefixes = self.runtime.pbw.prefixes
