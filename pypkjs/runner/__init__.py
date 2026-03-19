@@ -120,9 +120,8 @@ class Runner(object):
     def run(self):
         self.logger.info('Connecting to pebble')
         greenlet = self.pebble.connect()
-        # if self.pebble.timeline_is_supported:
-        #     self.timeline.continuous_sync()
-        #     self.timeline.do_maintenance()
+        # continuous_sync() deliberately NOT enabled -- the remote server is dead.
+        self.timeline.do_maintenance()
         greenlet.join()
 
     @property
