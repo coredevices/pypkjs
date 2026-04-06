@@ -32,6 +32,11 @@ class Geolocation(object):
         """)
 
     def _get_position(self, success, failure):
+        latitude = self.runtime.runner.latitude
+        longitude = self.runtime.runner.longitude
+        if latitude is not None and longitude is not None:
+            self.runtime.enqueue(success, Position(self.runtime, Coordinates(self.runtime, longitude, latitude, 1000), round(time.time() * 1000)))
+            return
         try:
             resp = requests.get('https://api.ipify.org')
             resp.raise_for_status()
