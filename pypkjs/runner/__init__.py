@@ -28,11 +28,13 @@ from pypkjs.timeline.urls import URLManager
 class Runner(object):
     PBW = collections.namedtuple('PBW', ('uuid', 'src', 'manifest', 'layouts', 'prefixes'))
 
-    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False):
+    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False, latitude=None, longitude=None):
         self.qemu = qemu
         self.pebble = PebbleManager(qemu)
         self.persist_dir = persist_dir
         self.oauth_token = oauth_token
+        self.latitude = latitude
+        self.longitude = longitude
         self.pebble.handle_start = self.handle_start
         self.pebble.handle_stop = self.handle_stop
         # PBL-26034: Due to PBL-24009 we must be sure to respond to appmessages received with no JS running.
@@ -137,6 +139,12 @@ class Runner(object):
             self.log_output("No JS found, can't show configuration.")
             return
         self.js.do_config()
+
+    def set_location(self, latitude, longitude):
+        self.latitude = latitude
+        self.longitude = longitude
+        if self.js is not None and self.js.geolocation is not None:
+            self.js.enqueue(self.js.geolocation.notify_watchers)
 
     def log_output(self, message):
         raise NotImplemented
