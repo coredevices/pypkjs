@@ -15,6 +15,8 @@ Coordinates = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.C
 class Geolocation(object):
     def __init__(self, runtime):
         self.runtime = runtime
+        self._watchers = {}
+        self._watch_counter = 0
 
         runtime.run_js("""
             Position = (function(coords, timestamp) {
@@ -59,8 +61,15 @@ class Geolocation(object):
         self.runtime.group.spawn(self._get_position, success, failure)
 
     def watchPosition(self, success, failure=None, options=None):
+        self._watch_counter += 1
+        watch_id = self._watch_counter
+        self._watchers[watch_id] = (success, failure)
         self.runtime.group.spawn(self._get_position, success, failure)
-        return 42
+        return watch_id
 
-    def clearWatch(self, thing):
-        pass
+    def clearWatch(self, watch_id):
+        self._watchers.pop(watch_id, None)
+
+    def notify_watchers(self):
+        for success, failure in tuple(self._watchers.values()):
+            self.runtime.group.spawn(self._get_position, success, failure)

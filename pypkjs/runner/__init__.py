@@ -143,6 +143,8 @@ class Runner(object):
     def set_location(self, latitude, longitude):
         self.latitude = latitude
         self.longitude = longitude
+        if self.js is not None and self.js.geolocation is not None:
+            self.js.enqueue(self.js.geolocation.notify_watchers)
 
     def log_output(self, message):
         raise NotImplemented
