@@ -48,7 +48,7 @@ class Websocket(object):
 
 class WebsocketRunner(Runner):
     def __init__(self, qemu, pbws, port, token=None, ssl_root=None, persist_dir=None, oauth_token=None,
-                 layout_file=None, block_private_addresses=False):
+                 layout_file=None, block_private_addresses=False, latitude=None, longitude=None):
         self.port = port
         self.token = token
         self.requires_auth = (token is not None)
@@ -58,7 +58,8 @@ class WebsocketRunner(Runner):
         self.ssl_root = ssl_root
         self.config_callback = None
         super(WebsocketRunner, self).__init__(qemu, pbws, persist_dir=persist_dir, oauth_token=oauth_token,
-                                              layout_file=layout_file, block_private_addresses=block_private_addresses)
+                                              layout_file=layout_file, block_private_addresses=block_private_addresses,
+                                              latitude=latitude, longitude=longitude)
 
     def run(self):
         pebble_greenlet = self.pebble.connect()
@@ -141,6 +142,7 @@ class WebsocketRunner(Runner):
             0x0a: self.do_config_ws,
             0x0b: self.do_qemu_command,
             0x0c: self.do_timeline_command,
+            0x0d: self.do_set_location,
         }
 
         if opcode in opcode_handlers:
@@ -231,6 +233,13 @@ class WebsocketRunner(Runner):
             self.log_output("Pin insert failed: %s: %s" % (type(e).__name__, e))
             ws.send(bytearray([0x0c, 0x01]))
 
+    @must_auth
+    def do_set_location(self, ws, message):
+        if len(message) < 16:
+            return
+        latitude, longitude = struct.unpack('>dd', bytes(message[:16]))
+        self.set_location(latitude, longitude)
+
 
 class WebsocketLogHandler(logging.Handler):
     def __init__(self, ws_runner, *args, **kwargs):
@@ -259,6 +268,8 @@ def run_tool():
     parser.add_argument('--layout', default=None, help="Path to a firmware layout.json file on disk.")
     parser.add_argument('--debug', action='store_true', help="Very, very verbose debug spew.")
     parser.add_argument('--block-private-addresses', action='store_true', help="Disable access to private IPs.")
+    parser.add_argument('--latitude', type=float, default=None, help="Spoof GPS latitude.")
+    parser.add_argument('--longitude', type=float, default=None, help="Spoof GPS longitude.")
     parser.add_argument('pbws', nargs='*', help="Set of pbws.")
     args = parser.parse_args(sys.argv[1:])
     logging.basicConfig()
@@ -266,7 +277,8 @@ def run_tool():
         logging.getLogger().setLevel(logging.DEBUG)
     else:
         logging.getLogger().setLevel(logging.INFO)
-    runner = WebsocketRunner(args.qemu,args.pbws, args.port, token=args.token, ssl_root=args.ssl_root,
+    runner = WebsocketRunner(args.qemu, args.pbws, args.port, token=args.token, ssl_root=args.ssl_root,
                              persist_dir=args.persist, oauth_token=args.oauth, layout_file=args.layout,
-                             block_private_addresses=args.block_private_addresses)
+                             block_private_addresses=args.block_private_addresses,
+                             latitude=args.latitude, longitude=args.longitude)
     runner.run()

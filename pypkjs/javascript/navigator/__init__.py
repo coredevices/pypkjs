@@ -9,9 +9,9 @@ class Navigator(object):
     def __init__(self, runtime):
 
         self._runtime = runtime
-        self._runtime = runtime
 
-        runtime.register_syscall('__get_internal_location', lambda : Geolocation(runtime))
+        runtime.geolocation = Geolocation(runtime)
+        runtime.register_syscall('__get_internal_location', lambda: runtime.geolocation)
 
         runtime.run_js("""
         navigator = new (function() {

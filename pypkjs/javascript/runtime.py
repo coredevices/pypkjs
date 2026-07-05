@@ -45,6 +45,7 @@ class JSRuntime(object):
         self.runtime_id = JSRuntime.runtimeCount
         self.persist_dir = persist_dir
         self.block_private_addresses = block_private_addresses
+        self.geolocation = None
         JSRuntime.runtimeCount += 1
 
     def register_syscall(self, name, call_fn):
