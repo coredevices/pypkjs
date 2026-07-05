@@ -121,7 +121,6 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
                 value = v8.JSArray(list(v))
             else:
                 raise JSRuntimeException("?????")
-            d[str(k)] = value
             if k in app_keys:
                 d[str(app_keys[k])] = value
         e = events.Event(self.runtime, "AppMessage")
