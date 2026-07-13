@@ -1,44 +1,41 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
+import json
 import logging
 
+from .qjs import from_js
+
 logger = logging.getLogger("pypkjs.javascript.console")
+
+
+def _stringify(value):
+    value = from_js(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    # JS numbers arrive as Python floats; render integer-valued ones without the
+    # trailing ".0" so console output matches V8 (42, not 42.0).
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
 
 class Console(object):
     def __init__(self, runtime):
         self.runtime = runtime
-
-        runtime.register_syscall("__get_internal_console", lambda : self)
-
-        runtime.run_js("""
-        console = new (function () {
-            var _internal_console = exec('__get_internal_console', []);
-            _make_proxies(this, _internal_console, ['log', 'warn', 'info', 'error']);
-        })();
-        """)
+        runtime.context.expose("console", self, ['log', 'warn', 'info', 'error'])
 
     def log(self, *params):
-        # kOverview == kLineNumber | kColumnOffset | kScriptName | kFunctionName
-        trace_str = str(v8.JSStackTrace.GetCurrentStackTrace(2, v8.JSStackTrace.Options.Overview))
-        try:
-            frames = v8.JSError.parse_stack(trace_str.strip())
-            caller_frame = frames[0]
-            filename = caller_frame[1]
-            line_num = caller_frame[2]
-            file_and_line = "{}:{}".format(filename, line_num)
-        except:
-            file_and_line = "???:?:?"
-
-        log_str = ' '.join([
-            x.toString() if hasattr(x, 'toString')
-            else str(x)
-            for x in params
-        ])
-
-        logger.debug("{} {}".format(file_and_line, log_str))
-        self.runtime.log_output("{} {}".format(file_and_line, log_str))
+        # ponytail: dropped the V8 JSStackTrace-based "file:line" prefix -- it was
+        # cosmetic and V8-only. Reinstate via a parsed QuickJS Error().stack if the
+        # per-line attribution turns out to matter.
+        self.runtime.log_output(' '.join(_stringify(x) for x in params))
 
     def warn(self, *params):
         self.log(*params)

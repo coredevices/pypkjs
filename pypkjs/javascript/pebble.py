@@ -14,7 +14,6 @@ import traceback
 from uuid import UUID
 import urllib.request, urllib.parse, urllib.error
 
-import STPyV8 as v8
 from libpebble2.protocol.appglance import AppGlance, AppGlanceSlice, AppGlanceSliceType
 from libpebble2.protocol.appmessage import AppMessage
 from libpebble2.protocol.blobdb import BlobDatabaseID, BlobStatus
@@ -28,6 +27,7 @@ from libpebble2.util.bundle import PebbleBundle
 from . import events
 from ..timeline.attributes import TimelineAttributeSet
 from .exceptions import JSRuntimeException
+from .qjs import from_js
 
 logger = logging.getLogger('pypkjs.javascript.pebble')
 
@@ -36,22 +36,15 @@ class TokenException(Exception):
     pass
 
 
-class Pebble(events.EventSourceMixin, v8.JSClass):
+class Pebble(events.EventSourceMixin):
     def __init__(self, runtime, pebble):
-        # Expose this instance to runtime (JS)
-        runtime.register_syscall("__get_internal_pebble", lambda : self)
-
-        runtime.run_js("""
-        Pebble = new (function() {
-            var _internal_pebble = exec('__get_internal_pebble', []);
-            _make_proxies(this, _internal_pebble,
-                ['sendAppMessage', 'showSimpleNotificationOnPebble', 'getAccountToken', 'getWatchToken',
-                'addEventListener', 'removeEventListener', 'openURL', 'getTimelineToken', 'timelineSubscribe',
-                'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload',
-                'insertTimelinePin', 'deleteTimelinePin']);
-            this.platform = 'pypkjs';
-        })();
-        """)
+        # Expose our methods as the JS `Pebble` global.
+        runtime.context.expose("Pebble", self,
+            ['sendAppMessage', 'showSimpleNotificationOnPebble', 'getAccountToken', 'getWatchToken',
+             'addEventListener', 'removeEventListener', 'openURL', 'getTimelineToken', 'timelineSubscribe',
+             'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload',
+             'insertTimelinePin', 'deleteTimelinePin'])
+        runtime.run_js("Pebble.platform = 'pypkjs';")
         self.blobdb = pebble.blobdb
         self.pebble = pebble.pebble
         self.runtime = runtime
@@ -111,21 +104,20 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
             return
 
         app_keys = dict(list(zip(list(self.app_keys.values()), list(self.app_keys.keys()))))
-        d = self.runtime.context.eval("({})")  # This is kinda absurd.
+        d = {}
         for k, v in dictionary.items():
             if isinstance(v, int):
                 value = v
             elif isinstance(v, str):
                 value = v
             elif isinstance(v, bytearray):
-                value = v8.JSArray(list(v))
+                value = list(v)
             else:
                 raise JSRuntimeException("?????")
             d[str(k)] = value
             if k in app_keys:
                 d[str(app_keys[k])] = value
-        e = events.Event(self.runtime, "AppMessage")
-        e.payload = d
+        e = events.Event(self.runtime, "AppMessage", {"payload": d})
         self.triggerEvent("appmessage", e)
 
     def _check_ready(self):
@@ -134,6 +126,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
 
     def sendAppMessage(self, message, success=None, failure=None):
         self._check_ready()
+        message = from_js(message)
         to_send = {}
         message = {k: message[str(k)] for k in list(message.keys())}
         for k, v in message.items():
@@ -147,8 +140,6 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
         d = {}
         appmessage = AppMessage()
         for k, v in to_send.items():
-            if isinstance(v, v8.JSArray):
-                v = list(v)
             if isinstance(v, str):
                 if not isinstance(v, str):
                     v = v.decode('utf-8')
@@ -242,7 +233,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def timelineSubscriptions(self, success=None, failure=None):
         def go():
             # Local emulation: return empty subscription list
-            subs = v8.JSArray([])
+            subs = []
             if callable(success):
                 self.runtime.enqueue(success, subs)
         self.runtime.group.spawn(go)
@@ -256,8 +247,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
         if isinstance(pin, str):
             pin = json.loads(pin)
         else:
-            # Convert V8 JSObject to Python dict via JSON round-trip
-            pin = json.loads(self.runtime.context.eval("JSON.stringify")(pin))
+            pin = from_js(pin)
 
         pin_id = str(pin.get('id', uuid_mod.uuid4()))
         guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
@@ -299,7 +289,7 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
     def getActiveWatchInfo(self):
         watch_info = self.pebble.watch_info
 
-        js_object = self.runtime.context.eval("({})")
+        js_object = {}
         platform = self._infer_installed_platform()
         js_object['platform'] = platform
         model = self.pebble.watch_model  # Note: this could take a while.
@@ -321,32 +311,32 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
         model = model_map.get(platform, 'qemu_platform_%s' % platform)
         js_object['model'] = model
         js_object['language'] = watch_info.language
-        firmware_obj = self.runtime.context.eval("({})")
         fw_version = self.pebble.firmware_version
-        firmware_obj['major'] = fw_version.major
-        firmware_obj['minor'] = fw_version.minor
-        firmware_obj['patch'] = fw_version.patch
-        firmware_obj['suffix'] = fw_version.suffix
-        js_object['firmware'] = firmware_obj
+        js_object['firmware'] = {
+            'major': fw_version.major,
+            'minor': fw_version.minor,
+            'patch': fw_version.patch,
+            'suffix': fw_version.suffix,
+        }
         return js_object
 
     def _handle_config_response(self, response):
         def go():
-            e = events.Event(self.runtime, "WebviewClosed")
-            e.response = response
+            e = events.Event(self.runtime, "WebviewClosed", {"response": response})
             self.triggerEvent("webviewclosed", e)
         self.runtime.enqueue(go)
 
     def appGlanceReload(self, slices, success, failure):
-        slices = [AppGlanceSlice(
-                    self._time_from_js(dict(x).get('expirationTime', None)),
+        slices = from_js(slices) or []
+        glance_slices = [AppGlanceSlice(
+                    self._time_from_js(x.get('expirationTime', None)),
                     AppGlanceSliceType.IconAndSubtitle,
                     TimelineAttributeSet(dict(x['layout']), self.runtime.runner.timeline, self.uuid).serialise())
                   for x in slices]
         glance = AppGlance(
             version=1,
             creation_time=int(time.time()),
-            slices=(slices or [])
+            slices=(glance_slices or [])
         )
         logger.debug("Constructed AppGlance: %s", glance)
 
@@ -354,10 +344,10 @@ class Pebble(events.EventSourceMixin, v8.JSClass):
             if result != BlobStatus.Success:
                 logger.warning("Glance reload failed: {!s}".format(result))
                 if callable(failure):
-                    failure(slices, self.runtime.context.eval("({success: false})"))
+                    self.runtime.call_js(failure, slices, {"success": False})
             else:
                 if callable(success):
-                    success(slices, self.runtime.context.eval("({success: true})"))
+                    self.runtime.call_js(success, slices, {"success": True})
 
         self.blobdb.insert(BlobDatabaseID.AppGlance, self.uuid, glance.serialise(), callback=handle_result)
 

@@ -2,7 +2,7 @@
 __author__ = 'katharine'
 
 import gevent
-import STPyV8 as v8
+
 
 class Timers(object):
     def __init__(self, runtime):
@@ -10,14 +10,8 @@ class Timers(object):
         self.timers = {}
         self.counter = 1
 
-        runtime.register_syscall("__get_timers", lambda : self)
-
-        runtime.run_js("""
-        (function() {
-            var _timers = exec('__get_timers', []);
-            _make_proxies(this, _timers, ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']);
-        })();
-        """)
+        runtime.context.expose_globals("timers", self,
+                                       ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'])
 
     def _exec_timer(self, timer_key, timeout_s, repeat, fn):
         while True:

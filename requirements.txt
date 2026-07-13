@@ -11,4 +11,4 @@ six>=1.17.0
 websocket-client>=1.8.0
 libpebble2>=0.0.27
 netaddr>=0.7.18
-stpyv8>=13.1.201.22
+quickjs-ng>=0.15.1
