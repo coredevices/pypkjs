@@ -260,7 +260,7 @@ class XHRWorker(object):
             if method in ('PUT', 'POST'):
                 if body is None:
                     raise Exception("No body provided for timeline pin insert")
-                pin = _json.loads(body) if isinstance(body, str) else body
+                pin = _json.loads(body)  # str, or bytes from an ArrayBuffer body
                 path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
                 if path_after_pins:
                     pin_id = unquote(path_after_pins)

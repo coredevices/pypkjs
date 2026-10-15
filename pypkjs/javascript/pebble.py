@@ -117,8 +117,7 @@ class Pebble(events.EventSourceMixin):
             d[str(k)] = value
             if k in app_keys:
                 d[str(app_keys[k])] = value
-        e = events.Event(self.runtime, "AppMessage", {"payload": d})
-        self.triggerEvent("appmessage", e)
+        self.triggerEvent("appmessage", "AppMessage", {"payload": d})
 
     def _check_ready(self):
         if not self.is_ready:
@@ -321,10 +320,7 @@ class Pebble(events.EventSourceMixin):
         return js_object
 
     def _handle_config_response(self, response):
-        def go():
-            e = events.Event(self.runtime, "WebviewClosed", {"response": response})
-            self.triggerEvent("webviewclosed", e)
-        self.runtime.enqueue(go)
+        self.triggerEvent("webviewclosed", "WebviewClosed", {"response": response})
 
     def appGlanceReload(self, slices, success, failure):
         slices = from_js(slices) or []
@@ -344,10 +340,10 @@ class Pebble(events.EventSourceMixin):
             if result != BlobStatus.Success:
                 logger.warning("Glance reload failed: {!s}".format(result))
                 if callable(failure):
-                    self.runtime.call_js(failure, slices, {"success": False})
+                    self.runtime.enqueue(failure, slices, {"success": False})
             else:
                 if callable(success):
-                    self.runtime.call_js(success, slices, {"success": True})
+                    self.runtime.enqueue(success, slices, {"success": True})
 
         self.blobdb.insert(BlobDatabaseID.AppGlance, self.uuid, glance.serialise(), callback=handle_result)
 

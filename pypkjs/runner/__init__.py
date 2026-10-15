@@ -43,6 +43,7 @@ class Runner(object):
         self.logger = logging.getLogger("pypkjs")
         self.running_uuid = None
         self.js = None
+        self.js_greenlet = None
         self.urls = URLManager()
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
@@ -102,7 +103,7 @@ class Runner(object):
                                                block_private_addresses=self.block_private_addresses)
         self.js.log_output = lambda m: self.log_output(m)
         self.js.open_config_page = lambda url, callback: self.open_config_page(url, callback)
-        gevent.spawn(self.js.run, pbw.src)
+        self.js_greenlet = gevent.spawn(self.js.run, pbw.src)
 
     def timeline_mapping_for_app(self, app_uuid):
         try:
@@ -111,11 +112,16 @@ class Runner(object):
             return None
         return pbw.layouts.get(self.pebble.pebble.watch_platform, {})
 
-    def stop_js(self):
+    def stop_js(self, wait=None):
+        """Stop the running JS app. With wait (seconds), block until its runtime has
+        shut down (localStorage flushed, handlers unregistered)."""
         if self.js is not None:
             self.js.stop()
             self.js = None
             self.running_uuid = None
+            if wait is not None and self.js_greenlet is not None:
+                self.js_greenlet.join(timeout=wait)
+            self.js_greenlet = None
 
     def run(self):
         self.logger.info('Connecting to pebble')

@@ -41,13 +41,14 @@ class LocalStorage(object):
         runtime.context.expose("__localstorage", self,
                                ['get', 'set', 'has', 'deleteProperty', 'ownKeys',
                                 'getOwnPropertyDescriptor', 'clear', 'getItem', 'setItem',
-                                'removeItem', 'key'])
+                                'removeItem', 'key', 'length'])
         runtime.run_js("""
         (function() {
             var _ls = __localstorage;
             var methods = ['clear', 'getItem', 'setItem', 'removeItem', 'key'];
             var handler = {
                 get: function(target, property, receiver) {
+                    if (property === 'length') { return _ls.length(); }
                     if (methods.indexOf(property) !== -1) {
                         if (property === 'setItem') {
                             // Coerce JS-side: String(true) -> 'true', String([1,2]) -> '1,2'
@@ -118,6 +119,9 @@ class LocalStorage(object):
             return _to_str(keys[index])
         else:
             return None
+
+    def length(self):
+        return len(self.storage.keys())
 
     def _shutdown(self):
         if hasattr(self.storage, 'close'):

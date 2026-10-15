@@ -11,7 +11,7 @@ import quickjs
 
 from . import PebbleKitJS
 from .exceptions import JSRuntimeException
-from .qjs import JSContext, JSError, from_js
+from .qjs import JSContext, JSError
 
 logger = logging.getLogger('pypkjs.javascript.pebble')
 
@@ -35,13 +35,14 @@ class JSRuntime(object):
         self.context.eval("var window = this; var globalThis = this;")
         # A base Event constructor + a builder the Python side uses to mint event
         # objects that still carry their methods (to_js can't emit functions, so we
-        # construct the object in JS and overlay data with Object.assign).
+        # construct the object in JS and copy the data properties onto it).
         self.context.eval("""
-            var Event = function(type) {
+            var Event = function(type, init) {
                 var self = this;
+                init = init || {};
                 this.type = type;
-                this.bubbles = false;
-                this.cancelable = false;
+                this.bubbles = !!init.bubbles;
+                this.cancelable = !!init.cancelable;
                 this.defaultPrevented = false;
                 this.target = null;
                 this.currentTarget = null;
@@ -50,22 +51,38 @@ class JSRuntime(object):
                 this.stopPropagation = function() {};
                 this.stopImmediatePropagation = function() { self._aborted = true; };
                 this.preventDefault = function() { self.defaultPrevented = true; };
+                this.initEvent = function(type, bubbles, cancelable) {
+                    self.type = type;
+                    self.bubbles = !!bubbles;
+                    self.cancelable = !!cancelable;
+                };
             };
+            Event.NONE = 0;
+            Event.CAPTURING_PHASE = 1;
+            Event.AT_TARGET = 2;
+            Event.BUBBLING_PHASE = 3;
             var _build_event = function(type, data) {
                 var e = new Event(type);
                 if (data) { for (var k in data) { e[k] = data[k]; } }
                 return e;
             };
+            var _event_aborted = function(e) { return !!(e && e._aborted); };
         """)
         self._build_event = self.context.get("_build_event")
+        self._event_aborted = self.context.get("_event_aborted")
         self.context.eval("var __js_identity = function(a, b) { return a === b; };")
         self._js_identity = self.context.get("__js_identity")
         self.pjs = PebbleKitJS(self, self.qemu, persist=self.persist_dir)
         self.pjs.do_post_setup()
 
     def build_event(self, event_type, data=None):
-        """Create a JS Event object (carrying its methods) with optional data props."""
+        """Create a JS Event object (carrying its methods) with optional data props.
+        Like every other JS call, this must only run on the event loop greenlet."""
         return self._build_event(event_type, self.context.to_js(data) if data else None)
+
+    def event_aborted(self, event):
+        """Whether stopImmediatePropagation() was called on a JS event."""
+        return bool(self._event_aborted(event))
 
     def run_js(self, src):
         self.context.eval(src)

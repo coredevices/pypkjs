@@ -79,7 +79,7 @@ _WS_JS = """
 class WSConn(object):
     CONNECTING, OPEN, CLOSING, CLOSED = 0, 1, 2, 3
 
-    def __init__(self, runtime, url, protocols, on_open, on_message, on_close, on_error):
+    def __init__(self, runtime, url, protocols, on_open, on_message, on_close, on_error, on_finished):
         self.runtime = runtime
         self.url = url
         if protocols is None:
@@ -90,11 +90,18 @@ class WSConn(object):
             self.protocols = [protocols]
         self.on_open, self.on_message = on_open, on_message
         self.on_close, self.on_error = on_close, on_error
+        self.on_finished = on_finished
         self.ws = None
         self.readyState = self.CONNECTING
         self.runtime.group.spawn(self._handle)
 
     def _handle(self):
+        try:
+            self._run()
+        finally:
+            self.on_finished()
+
+    def _run(self):
         try:
             self.ws = websocket.create_connection(self.url, subprotocols=self.protocols)
         except (websocket.WebSocketException, OSError):
@@ -154,11 +161,15 @@ class WSWorker(object):
         self.counter += 1
         conn_id = self.counter
         self.conns[conn_id] = WSConn(self.runtime, url, from_js(protocols),
-                                     on_open, on_message, on_close, on_error)
+                                     on_open, on_message, on_close, on_error,
+                                     lambda: self.conns.pop(conn_id, None))
         return conn_id
 
     def send(self, conn_id, data, binary):
-        self.conns[conn_id].send(from_js(data), binary)
+        conn = self.conns.get(conn_id)
+        if conn is None:
+            raise JSRuntimeException("Websocket is not open.")
+        conn.send(from_js(data), binary)
 
     def close(self, conn_id, code, reason):
         conn = self.conns.get(conn_id)

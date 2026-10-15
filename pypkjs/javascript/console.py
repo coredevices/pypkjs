@@ -1,47 +1,41 @@
 
 __author__ = 'katharine'
 
-import json
 import logging
 
-from .qjs import from_js
-
 logger = logging.getLogger("pypkjs.javascript.console")
-
-
-def _stringify(value):
-    value = from_js(value)
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (dict, list)):
-        return json.dumps(value)
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    # JS numbers arrive as Python floats; render integer-valued ones without the
-    # trailing ".0" so console output matches V8 (42, not 42.0).
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
 
 
 class Console(object):
     def __init__(self, runtime):
         self.runtime = runtime
-        runtime.context.expose("console", self, ['log', 'warn', 'info', 'error'])
+        # Arguments are formatted JS-side: JSON.stringify can't represent errors,
+        # functions, symbols or circular objects, and logging must never throw.
+        runtime.context.expose("__console", self, ['output'])
+        runtime.run_js("""
+        (function() {
+            function format(x) {
+                if (typeof x === 'string') return x;
+                if (x instanceof Error) return String(x);
+                if (x !== null && typeof x === 'object') {
+                    try {
+                        var json = JSON.stringify(x);
+                        if (json !== undefined) return json;
+                    } catch (e) {}
+                }
+                try { return String(x); } catch (e) { return Object.prototype.toString.call(x); }
+            }
+            function log() {
+                var parts = [];
+                for (var i = 0; i < arguments.length; i++) { parts.push(format(arguments[i])); }
+                __console.output(parts.join(' '));
+            }
+            var console = { log: log, warn: log, info: log, error: log, debug: log };
+            window.console = console;
+        })();
+        """)
 
-    def log(self, *params):
-        # ponytail: dropped the V8 JSStackTrace-based "file:line" prefix -- it was
-        # cosmetic and V8-only. Reinstate via a parsed QuickJS Error().stack if the
-        # per-line attribution turns out to matter.
-        self.runtime.log_output(' '.join(_stringify(x) for x in params))
-
-    def warn(self, *params):
-        self.log(*params)
-
-    def info(self, *params):
-        self.log(*params)
-
-    def error(self, *params):
-        self.log(*params)
+    def output(self, message):
+        # The V8 runtime prefixed lines with the caller's "file:line"; QuickJS's
+        # binding doesn't expose script names, so we log the message alone.
+        self.runtime.log_output(message)

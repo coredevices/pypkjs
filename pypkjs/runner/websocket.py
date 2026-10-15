@@ -272,8 +272,10 @@ def run_tool():
                              block_private_addresses=args.block_private_addresses)
     runner.run()
     # The quickjs-ng extension deadlocks against gevent's hub during interpreter
-    # shutdown. Runtime cleanup (localStorage flush, etc.) has already run by now, so
-    # exit immediately rather than hang. See qjs.py for the binding details.
+    # shutdown (see pypkjs/javascript/qjs.py), so shut the JS runtime down
+    # explicitly -- flushing localStorage -- and then exit without the normal
+    # interpreter teardown.
+    runner.stop_js(wait=5)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)

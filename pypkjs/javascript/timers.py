@@ -10,8 +10,27 @@ class Timers(object):
         self.timers = {}
         self.counter = 1
 
-        runtime.context.expose_globals("timers", self,
-                                       ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'])
+        runtime.context.expose("__timers", self,
+                               ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'])
+        # Per the HTML spec the delay is optional and any extra arguments are passed
+        # to the callback; bind them JS-side so Python only sees (fn, delay).
+        runtime.run_js("""
+        (function() {
+            function wrap(fn, args) {
+                if (typeof fn !== 'function' || args.length === 0) return fn;
+                return function() { return fn.apply(null, args); };
+            }
+            function delay(ms) { ms = Number(ms); return ms > 0 ? ms : 0; }
+            window.setTimeout = function(fn, ms) {
+                return __timers.setTimeout(wrap(fn, Array.prototype.slice.call(arguments, 2)), delay(ms));
+            };
+            window.setInterval = function(fn, ms) {
+                return __timers.setInterval(wrap(fn, Array.prototype.slice.call(arguments, 2)), delay(ms));
+            };
+            window.clearTimeout = function(id) { __timers.clearTimeout(id); };
+            window.clearInterval = function(id) { __timers.clearInterval(id); };
+        })();
+        """)
 
     def _exec_timer(self, timer_key, timeout_s, repeat, fn):
         while True:

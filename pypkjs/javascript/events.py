@@ -2,7 +2,7 @@
 __author__ = 'katharine'
 
 from .exceptions import JSRuntimeException
-from .qjs import JSError, from_js
+from .qjs import JSError
 
 
 class EventExtension:
@@ -19,11 +19,6 @@ class EventExtension:
             ProgressEvent.prototype = Object.create(Event.prototype);
             ProgressEvent.prototype.constructor = ProgressEvent;
         """)
-
-
-def Event(runtime, event_type, data=None):
-    """Mint a JS Event object (carrying its methods) with optional data props."""
-    return runtime.build_event(event_type, data)
 
 
 class EventSourceMixin(object):
@@ -46,27 +41,30 @@ class EventSourceMixin(object):
             self.__listeners[event] = [l for l in self.__listeners[event]
                                        if not self.__runtime.js_same(l, listener)]
 
-    def triggerEvent(self, event_name, event=None, *params):
-        if event is None:
-            event = Event(self.__runtime, event_name)
+    def triggerEvent(self, event_name, event_type=None, data=None):
+        """Dispatch event_name to its listeners and on<event_name> handler.
 
+        The JS Event is built inside go(), on the event loop greenlet: callers may
+        run on any greenlet, and touching the JS engine from one while another is
+        suspended mid-call (e.g. in a sync XHR) can crash QuickJS."""
         def go():
+            event = self.__runtime.build_event(event_type or event_name, data)
             for listener in list(self.__listeners.get(event_name, [])):
                 try:
-                    self.__runtime.call_js(listener, event, *params)
+                    self.__runtime.call_js(listener, event)
                 except (JSError, JSRuntimeException) as e:
                     self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
                 except Exception as e:
                     self.__runtime.log_output(str(e))
                     raise
                 finally:
-                    if from_js(event).get('_aborted'):
+                    if self.__runtime.event_aborted(event):
                         break
             # An on<event> handler property, if the subclass exposes one.
             dom_event = getattr(self, "on" + event_name, None)
             if dom_event is not None:
                 try:
-                    self.__runtime.call_js(dom_event, event, *params)
+                    self.__runtime.call_js(dom_event, event)
                 except (JSError, JSRuntimeException) as e:
                     self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
                 except Exception as e:

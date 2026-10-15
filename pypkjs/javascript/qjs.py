@@ -1,6 +1,3 @@
-
-__author__ = 'rhaist'
-
 """QuickJS integration for the PebbleKit JS runtime.
 
 This replaces the old STPyV8/V8 dependency. STPyV8 is archived upstream and ships
@@ -26,7 +23,20 @@ Because callbacks and data always arrive in *known argument positions* (e.g.
 positions with ``from_js`` and keeps the callback positions as-is -- no run-time
 type sniffing is required (and none is possible: every quickjs value is
 ``callable``).
+
+Two binding constraints the rest of pypkjs works around:
+
+  * Only the runtime's event loop greenlet may call into the engine. A JS call
+    can yield to gevent (sync XHR blocks on the network), and entering QuickJS
+    from another greenlet while one is suspended mid-call corrupts its frame
+    stack and can segfault. Other greenlets hand work over via
+    ``JSRuntime.enqueue``.
+  * The extension deadlocks against gevent's hub during interpreter shutdown, so
+    the ``pypkjs`` entry point shuts the runtime down explicitly and then
+    ``os._exit``s.
 """
+
+__author__ = 'rhaist'
 
 import json
 
@@ -99,16 +109,6 @@ class JSContext(object):
         # the method names), never from JS/app input.
         wiring = "var {0} = {0} || {{}};".format(js_name) + "".join(
             self._method_js(js_name + "." + m, "__{0}_{1}".format(js_name, m))
-            for m in methods)
-        self._ctx.eval(wiring)
-
-    def expose_globals(self, prefix, obj, methods):
-        """Like expose(), but binds each method as a bare global function (e.g.
-        setTimeout) rather than a property of a named object."""
-        for m in methods:
-            self._ctx.add_callable("__{0}_{1}".format(prefix, m), self._wrap(getattr(obj, m)))
-        wiring = "".join(
-            "var " + self._method_js(m, "__{0}_{1}".format(prefix, m))
             for m in methods)
         self._ctx.eval(wiring)
 
