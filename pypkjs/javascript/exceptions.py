@@ -1,11 +1,10 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
-
 
 class JSRuntimeException(Exception):
     def __init__(self, message):
-        trace = v8.JSStackTrace.GetCurrentStackTrace(20, v8.JSStackTrace.Options.Detailed)
-        self.stackTrace = "Error: %s\n%s" % (message, str(trace))
+        # QuickJS has no equivalent of V8's JSStackTrace capture; the message is
+        # the useful part of the log line anyway.
+        self.stackTrace = "Error: %s" % message
         Exception.__init__(self, message)

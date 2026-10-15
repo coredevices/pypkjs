@@ -11,6 +11,7 @@ from geventwebsocket.handler import WebSocketHandler
 import argparse
 import json
 import logging
+import os
 import ssl
 import struct
 import sys
@@ -270,3 +271,11 @@ def run_tool():
                              persist_dir=args.persist, oauth_token=args.oauth, layout_file=args.layout,
                              block_private_addresses=args.block_private_addresses)
     runner.run()
+    # The quickjs-ng extension deadlocks against gevent's hub during interpreter
+    # shutdown (see pypkjs/javascript/qjs.py), so shut the JS runtime down
+    # explicitly -- flushing localStorage -- and then exit without the normal
+    # interpreter teardown.
+    runner.stop_js(wait=5)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

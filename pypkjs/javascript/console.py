@@ -1,50 +1,41 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
 import logging
 
 logger = logging.getLogger("pypkjs.javascript.console")
 
+
 class Console(object):
     def __init__(self, runtime):
         self.runtime = runtime
-
-        runtime.register_syscall("__get_internal_console", lambda : self)
-
+        # Arguments are formatted JS-side: JSON.stringify can't represent errors,
+        # functions, symbols or circular objects, and logging must never throw.
+        runtime.context.expose("__console", self, ['output'])
         runtime.run_js("""
-        console = new (function () {
-            var _internal_console = exec('__get_internal_console', []);
-            _make_proxies(this, _internal_console, ['log', 'warn', 'info', 'error']);
+        (function() {
+            function format(x) {
+                if (typeof x === 'string') return x;
+                if (x instanceof Error) return String(x);
+                if (x !== null && typeof x === 'object') {
+                    try {
+                        var json = JSON.stringify(x);
+                        if (json !== undefined) return json;
+                    } catch (e) {}
+                }
+                try { return String(x); } catch (e) { return Object.prototype.toString.call(x); }
+            }
+            function log() {
+                var parts = [];
+                for (var i = 0; i < arguments.length; i++) { parts.push(format(arguments[i])); }
+                __console.output(parts.join(' '));
+            }
+            var console = { log: log, warn: log, info: log, error: log, debug: log };
+            window.console = console;
         })();
         """)
 
-    def log(self, *params):
-        # kOverview == kLineNumber | kColumnOffset | kScriptName | kFunctionName
-        trace_str = str(v8.JSStackTrace.GetCurrentStackTrace(2, v8.JSStackTrace.Options.Overview))
-        try:
-            frames = v8.JSError.parse_stack(trace_str.strip())
-            caller_frame = frames[0]
-            filename = caller_frame[1]
-            line_num = caller_frame[2]
-            file_and_line = "{}:{}".format(filename, line_num)
-        except:
-            file_and_line = "???:?:?"
-
-        log_str = ' '.join([
-            x.toString() if hasattr(x, 'toString')
-            else str(x)
-            for x in params
-        ])
-
-        logger.debug("{} {}".format(file_and_line, log_str))
-        self.runtime.log_output("{} {}".format(file_and_line, log_str))
-
-    def warn(self, *params):
-        self.log(*params)
-
-    def info(self, *params):
-        self.log(*params)
-
-    def error(self, *params):
-        self.log(*params)
+    def output(self, message):
+        # The V8 runtime prefixed lines with the caller's "file:line"; QuickJS's
+        # binding doesn't expose script names, so we log the message alone.
+        self.runtime.log_output(message)

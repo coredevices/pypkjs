@@ -1,7 +1,6 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
 import errno
 import logging
 import os
@@ -10,6 +9,12 @@ import dbm.dumb  # This is the only one that actually syncs data if the process 
 logger = logging.getLogger("pypkjs.javascript.localstorage")
 
 _storage_cache = {}  # This is used when filesystem-based storage is unavailable.
+
+
+def _to_str(value):
+    # The dbm.dumb persistent store returns bytes for keys and values; the transient
+    # dict store returns str. JS values must be str -- quickjs won't convert bytes.
+    return value.decode('utf-8') if isinstance(value, bytes) else value
 
 
 class LocalStorage(object):
@@ -30,58 +35,71 @@ class LocalStorage(object):
             logger.warning("Using transient store.")
             self.storage = _storage_cache.setdefault(str(runtime.pbw.uuid), {})
 
-        runtime.register_syscall('__get_internal_localstorage', lambda : self)
+        # Expose the Python methods as a native object, then build a JS Proxy whose
+        # traps delegate to it. Property access (localStorage.foo) hits the get/set
+        # traps; the DOM methods (getItem, ...) are returned as functions by get.
+        runtime.context.expose("__localstorage", self,
+                               ['get', 'set', 'has', 'deleteProperty', 'ownKeys',
+                                'getOwnPropertyDescriptor', 'clear', 'getItem', 'setItem',
+                                'removeItem', 'key', 'length'])
         runtime.run_js("""
         (function() {
-            var _internal = exec('__get_internal_localstorage', []);
-
-            const handler = {
-                get(target, property, receiver) {
-                    if (['clear', 'getItem', 'setItem', 'removeItem', 'key'].includes(property)) {
-                        return function(...args) {
-                            return _internal[property](...args);
+            var _ls = __localstorage;
+            var methods = ['clear', 'getItem', 'setItem', 'removeItem', 'key'];
+            var handler = {
+                get: function(target, property, receiver) {
+                    if (property === 'length') { return _ls.length(); }
+                    if (methods.indexOf(property) !== -1) {
+                        if (property === 'setItem') {
+                            // Coerce JS-side: String(true) -> 'true', String([1,2]) -> '1,2'
+                            // (Python str() would store 'True' / a quickjs.Object repr).
+                            return function(k, v) { return _ls.setItem(String(k), String(v)); };
                         }
+                        return function() { return _ls[property].apply(_ls, arguments); };
                     }
-                    return _internal.get(null, property)
-                }
-            }
-
-            _make_proxies(handler, _internal, ['set', 'has', 'deleteProperty', 'ownKeys', 'getOwnPropertyDescriptor', 'enumerate']);
-
-            this.localStorage = new Proxy({}, handler);
+                    return _ls.get(null, property);
+                },
+                set: function(target, property, value, receiver) {
+                    return _ls.set(null, property, String(value), null);
+                },
+                has: function(target, property) { return _ls.has(null, property); },
+                deleteProperty: function(target, property) { return _ls.deleteProperty(null, property); },
+                ownKeys: function(target) { return _ls.ownKeys(null); },
+                getOwnPropertyDescriptor: function(target, property) {
+                    return _ls.getOwnPropertyDescriptor(null, property);
+                },
+            };
+            window.localStorage = new Proxy({}, handler);
         })();
         """)
 
     def get(self, receiver, name):
-        return self.storage.get(str(name), v8.JSNull())
+        return _to_str(self.storage.get(str(name), None))
 
     def set(self, target, name, value, receiver):
         self.storage[str(name)] = str(value)
         return True
 
     def has(self, target, name):
-        return name in self.storage
+        return str(name) in self.storage
 
     def deleteProperty(self, target, name):
-        if name in self.storage:
-            del self.storage[name]
+        if str(name) in self.storage:
+            del self.storage[str(name)]
             return True
         else:
             return False
 
     def ownKeys(self, target):
-        return v8.JSArray(list(self.storage.keys()))
+        return [_to_str(k) for k in self.storage.keys()]
 
     def getOwnPropertyDescriptor(self, target, name):
-        if name in self.storage:
+        if str(name) in self.storage:
             return {
                 'enumerable': True,
-                'configurable': True
+                'configurable': True,
             }
         return None
-
-    def enumerate(self, target, receiver):
-        return v8.JSArray(list(self.storage.keys()))
 
     def clear(self, *args):
         self.storage.clear()
@@ -96,10 +114,14 @@ class LocalStorage(object):
         return self.deleteProperty(None, name)
 
     def key(self, index, *args):
-        if len(self.storage) > index:
-            return list(self.storage.keys())[index]
+        keys = list(self.storage.keys())
+        if len(keys) > index:
+            return _to_str(keys[index])
         else:
-            return v8.JSNull()
+            return None
+
+    def length(self):
+        return len(self.storage.keys())
 
     def _shutdown(self):
         if hasattr(self.storage, 'close'):

@@ -3,307 +3,313 @@ __author__ = 'katharine'
 
 from gevent import monkey; monkey.patch_all()
 
+import datetime
+import json as _json
+import logging
+import uuid as uuid_mod
+from urllib.parse import urlparse, unquote
+
 import requests
 import requests.exceptions
 
-import STPyV8 as v8
-from . import events
 from .safe_requests import NonlocalHTTPAdapter
-from .exceptions import JSRuntimeException
+from .qjs import from_js
 
-ProgressEvent = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.ProgressEvent, args)
-
-class XHRExtension:
-    def __init__(self, runtime):
-        runtime.run_js("""
-            ProgressEvent = function(computable, loaded, total) {
-                Event.call(this);
-                computable = computable || false;
-                loaded = loaded || 0;
-                total = total || 0;
-                Object.defineProperties(this, {
-                    lengthComputable: {
-                        get: function() { return computable; },
-                        enumerable: true,
-                    },
-                    loaded: {
-                        get: function() { return loaded; },
-                        enumerable: true,
-                    },
-                    total: {
-                        get: function() { return total; },
-                        enumerable: true,
-                    },
-                });
-            }
-            ProgressEvent.prototype = Object.create(Event.prototype);
-            ProgressEvent.prototype.constructor = ProgressEvent;
-        """)
-
-        runtime.run_js("""
-            _init_xhr = function(runtime, session) {
-                var _xhr = exec('__get_xhr', []);
-                this.XMLHttpRequest = function() {
-                    var origin = new _xhr(runtime, session);
-                    _make_proxies(this, origin, ['open', 'setRequestHeader', 'overrideMimeType', 'send', 'getResponseHeader',
-                                                    'getAllResponseHeaders', 'abort', 'addEventListener', 'removeEventListener']);
-                    _make_properties(this, origin, ['readyState', 'response', 'responseText', 'responseType', 'status',
-                                                    'statusText', 'timeout', 'onreadystatechange', 'ontimeout', 'onload',
-                                                    'onloadstart', 'onloadend', 'onprogress', 'onerror', 'onabort']);
-                }
-                this.XMLHttpRequest.UNSENT = 0;
-                this.XMLHttpRequest.OPENED = 1;
-                this.XMLHttpRequest.HEADERS_RECEIVED = 2;
-                this.XMLHttpRequest.LOADING = 3;
-                this.XMLHttpRequest.DONE = 4;
-            
-            }
-        """)
+logger = logging.getLogger('pypkjs.javascript.xhr')
 
 _TIMELINE_API_HOSTS = {'timeline-api.rebble.io', 'timeline-api.getpebble.com'}
 
+# The reactive XMLHttpRequest object lives entirely in JS -- QuickJS can't expose a
+# live Python object with settable properties/handlers, so the object (its state,
+# on* handlers, addEventListener listeners) is JS and only the network side-effect
+# is delegated to the Python worker below via __xhr.perform(spec, done).
+_XHR_JS = """
+(function() {
+    function XMLHttpRequest() {
+        this.readyState = 0;
+        this.response = null;
+        this.responseText = null;
+        this.responseType = "";
+        this.status = null;
+        this.statusText = null;
+        this.timeout = 0;
+        this._method = null;
+        this._url = null;
+        this._headers = {};
+        this._respHeaders = {};
+        this._listeners = {};
+        this.onreadystatechange = null;
+        this.ontimeout = null;
+        this.onload = null;
+        this.onloadstart = null;
+        this.onloadend = null;
+        this.onprogress = null;
+        this.onerror = null;
+        this.onabort = null;
+    }
+    XMLHttpRequest.UNSENT = 0;
+    XMLHttpRequest.OPENED = 1;
+    XMLHttpRequest.HEADERS_RECEIVED = 2;
+    XMLHttpRequest.LOADING = 3;
+    XMLHttpRequest.DONE = 4;
 
-class XMLHttpRequest(events.EventSourceMixin):
-    UNSENT = 0
-    OPENED = 1
-    HEADERS_RECEIVED = 2
-    LOADING = 3
-    DONE = 4
+    XMLHttpRequest.prototype._fire = function(type, ev) {
+        ev = ev || { type: type };
+        var handler = this['on' + type];
+        if (handler) { handler.call(this, ev); }
+        var ls = this._listeners[type] || [];
+        for (var i = 0; i < ls.length; i++) { ls[i].call(this, ev); }
+    };
+    XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+        this._method = method;
+        this._url = url;
+        this._async = (async === undefined) ? true : !!async;
+        this._user = (user === undefined) ? null : user;
+        this._password = (password === undefined) ? null : password;
+        this.readyState = 1;
+        this._fire('readystatechange');
+    };
+    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+        this._headers[header] = value;
+    };
+    XMLHttpRequest.prototype.overrideMimeType = function(mime) { this._mime = mime; };
+    XMLHttpRequest.prototype.getResponseHeader = function(h) {
+        h = String(h).toLowerCase();
+        for (var k in this._respHeaders) {
+            if (k.toLowerCase() === h) { return this._respHeaders[k]; }
+        }
+        return null;
+    };
+    XMLHttpRequest.prototype.getAllResponseHeaders = function() {
+        var out = [];
+        for (var k in this._respHeaders) { out.push(k + '\\x3a\\x20' + this._respHeaders[k]); }
+        return out.length ? out.join('\\x0d\\x0a') : null;
+    };
+    XMLHttpRequest.prototype.addEventListener = function(type, fn) {
+        (this._listeners[type] = this._listeners[type] || []).push(fn);
+    };
+    XMLHttpRequest.prototype.removeEventListener = function(type, fn) {
+        var ls = this._listeners[type];
+        if (!ls) return;
+        this._listeners[type] = ls.filter(function(f) { return f !== fn; });
+    };
+    function applyResult(self, res) {
+        if (res.error) {
+            self.status = res.status || 0;
+            self.statusText = res.statusText || "";
+            self.readyState = 4;
+            self._fire(res.timeout ? 'timeout' : 'error');
+            self._fire('loadend');
+            self._fire('readystatechange');
+            return;
+        }
+        self.status = res.status;
+        self.statusText = res.statusText;
+        self.responseText = res.responseText;
+        self._respHeaders = res.headers || {};
+        if (self.responseType === 'json') { self.response = res.response; }
+        else if (self.responseType === 'arraybuffer') { self.response = (new Uint8Array(res.responseBytes || [])).buffer; }
+        else { self.response = res.responseText; }
+        self.readyState = 4;
+        self._fire('load');
+        self._fire('loadend');
+        self._fire('readystatechange');
+    }
 
+    XMLHttpRequest.prototype.send = function(body) {
+        var self = this;
+        var bodyBytes = null;
+        if (body instanceof ArrayBuffer) {
+            bodyBytes = Array.prototype.slice.call(new Uint8Array(body));
+            body = null;
+        } else if (ArrayBuffer.isView(body)) {
+            bodyBytes = Array.prototype.slice.call(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+            body = null;
+        } else if (body !== undefined && body !== null && typeof body !== 'string') {
+            body = String(body);  // per spec: ToString, e.g. '[object Object]'
+        }
+        var spec = {
+            method: this._method, url: this._url, headers: this._headers,
+            body: (body === undefined ? null : body), bodyBytes: bodyBytes,
+            user: this._user, password: this._password,
+            timeout: this.timeout || 0, responseType: this.responseType || ""
+        };
+        this._aborted = false;
+        this._fire('loadstart');
+        if (this._async === false) {
+            // Sync XHR: the Python side blocks and RETURNS the result (no
+            // re-entrant callback), so events have fired before send() returns.
+            applyResult(self, __xhr.performSync(spec));
+            return;
+        }
+        this._req = __xhr.perform(spec, function(res) {
+            if (self._aborted) { return; }
+            applyResult(self, res);
+        });
+    };
+    XMLHttpRequest.prototype.abort = function() {
+        this._aborted = true;
+        if (this._req) { __xhr.abort(this._req); this._req = null; }
+        if (this.readyState !== 0 && this.readyState !== 4) {
+            this.readyState = 4;
+            this._fire('readystatechange');
+            this._fire('abort');
+            this._fire('loadend');
+            this.readyState = 0;
+        }
+    };
+
+    window.XMLHttpRequest = XMLHttpRequest;
+})();
+"""
+
+
+class XHRWorker(object):
     def __init__(self, runtime, session):
-        # properties
-        self.readyState = self.UNSENT
-        self.response = None
-        self.responseText = None
-        self.responseType = ""
-        self.status = None
-        self.statusText = None
-        self.timeout = None
+        self.runtime = runtime
+        self.session = session
+        self._live = {}   # request id -> greenlet, for abort()
+        self._counter = 0
 
-        # handlers
-        self.onreadystatechange = None
-        self.ontimeout = None
-        self.onload = None
-        self.onloadstart = None
-        self.onloadend = None
-        self.onprogress = None
-        self.onerror = None
-        self.onabort = None
+    def perform(self, spec, done):
+        # spec is a JS object; done is a JS callback. Do the network off the JS
+        # thread, then hand the result back for the JS object to apply. Returns a
+        # request id that abort() accepts.
+        spec = from_js(spec)
+        self._counter += 1
+        rid = self._counter
+        self._live[rid] = self.runtime.group.spawn(self._run, rid, spec, done)
+        return rid
 
-        # internal
-        self._request = None
-        self._response = None
-        self._async = False
-        self._mime_override = None
-        self._runtime = runtime
-        self._session = session
-        self._thread = None
-        self._sent = False
+    def performSync(self, spec):
+        # Sync XHR (open(..., false)): block this greenlet on the network and
+        # return the result directly -- gevent keeps the rest of the world alive.
+        return self._do(from_js(spec))
 
-        super(XMLHttpRequest, self).__init__(runtime)
+    def abort(self, rid):
+        g = self._live.pop(rid, None)
+        if g is not None:
+            g.kill(block=False)
 
+    def _run(self, rid, spec, done):
+        # A result that races abort() is dropped by the JS-side _aborted guard.
+        try:
+            self.runtime.enqueue(done, self._do(spec))
+        finally:
+            self._live.pop(rid, None)
 
-    def open(self, method, url, async_=True, user=None, password=None):
-        self._request = requests.Request(method, url)
-        if user is not None:
-            self._request.auth = (user, password or "")
-        self._async = async_
-        self.readyState = self.OPENED
-        self._trigger_async_event("readystatechange")
+    def _do(self, spec):
+        method = (spec.get('method') or 'GET')
+        url = spec.get('url')
+        headers = spec.get('headers') or {}
+        body = spec.get('body')
+        if spec.get('bodyBytes') is not None:
+            body = bytes(bytearray(spec['bodyBytes']))
+        user = spec.get('user')
+        auth = (user, spec.get('password') or '') if user else None
+        timeout = spec.get('timeout') or 0
+        response_type = spec.get('responseType') or ""
 
-    def setRequestHeader(self, header, value):
-        if self.readyState != self.OPENED:
-            raise JSRuntimeException("Request headers can only be set in the OPENED state.")
-        if self._sent:
-            raise JSRuntimeException("Request headers cannot be set after sending a request.")
-        self._request.headers[header] = value
+        if self._is_timeline_api_request(method, url):
+            return self._handle_timeline_api_request(method, url, body)
 
-    def overrideMimeType(self, mimetype):
-        if self.readyState >= self.LOADING:
-            raise JSRuntimeException("The mime type cannot be overridden after the request starts loading.")
-        self._mime_override = mimetype
+        try:
+            req = requests.Request(method, url, headers=headers, auth=auth,
+                                   data=(body if body is not None else None))
+            prepared = self.session.prepare_request(req)
+            resp = self.session.send(prepared, timeout=(timeout / 1000.0 if timeout else None), verify=True)
+            result = {
+                'status': resp.status_code,
+                'statusText': resp.reason,
+                'responseText': resp.text,
+                'headers': dict(resp.headers),
+            }
+            if response_type == 'json':
+                try:
+                    result['response'] = resp.json()
+                except ValueError:
+                    result['response'] = None
+            elif response_type == 'arraybuffer':
+                result['responseBytes'] = list(resp.content)
+        except requests.exceptions.Timeout:
+            result = {'error': True, 'timeout': True, 'status': 0, 'statusText': 'timeout'}
+        except Exception as e:
+            # Broad on purpose: an uncaught exception here would kill the worker
+            # greenlet and the request would hang at readyState 1 forever.
+            result = {'error': True, 'status': 0, 'statusText': str(e)}
+        return result
 
-    def _do_request_error(self, exception, event):
-        self.readyState = self.DONE
-        if not self._async:
-            raise Exception(exception)
-        self._trigger_async_event("readystatechange")
-
-    def _is_timeline_api_request(self):
-        """Check if this request targets a timeline pin API endpoint."""
-        if self._request is None or self._request.url is None:
+    def _is_timeline_api_request(self, method, url):
+        if not url:
             return False
-        from urllib.parse import urlparse
-        parsed = urlparse(self._request.url)
+        parsed = urlparse(url)
         return (parsed.hostname in _TIMELINE_API_HOSTS
                 and parsed.path is not None
                 and parsed.path.lower().startswith('/v1/user/pins'))
 
-    def _handle_timeline_api_request(self):
-        """Handle a timeline API request locally via BlobDB instead of hitting the dead server."""
-        import json
-        import datetime
-        import uuid as uuid_mod
-        import logging
-        from urllib.parse import urlparse, unquote
-
+    def _handle_timeline_api_request(self, method, url, body):
+        """Handle a timeline pin API request locally via BlobDB (the servers are gone)."""
         tl_logger = logging.getLogger('pypkjs.javascript.xhr.timeline')
-        method = self._request.method.upper()
-        parsed = urlparse(self._request.url)
+        method = method.upper()
+        parsed = urlparse(url)
         path = parsed.path
+        timeline = self.runtime.runner.timeline
+        app_uuid = str(self.runtime.runner.running_uuid)
 
-        timeline = self._runtime.runner.timeline
-        app_uuid = str(self._runtime.runner.running_uuid)
-
-        if method in ('PUT', 'POST'):
-            body = self._request.data
-            if body is None:
-                raise Exception("No body provided for timeline pin insert")
-            pin = json.loads(body) if isinstance(body, str) else json.loads(body.decode('utf-8'))
-
-            # Extract pin_id from URL path or body
-            path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
-            if path_after_pins:
-                pin_id = unquote(path_after_pins)
-            elif 'id' in pin:
-                pin_id = str(pin['id'])
-            else:
-                raise Exception("No pin id found in URL or body")
-
-            # Convert to web pin format (same as InsertPinCommand in pebble_tool/commands/timeline.py)
-            guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
-            now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            pin['guid'] = str(guid)
-            pin['createTime'] = now
-            pin['updateTime'] = now
-            pin['topicKeys'] = pin.get('topicKeys', [])
-            pin['source'] = 'sdk'
-            pin['dataSource'] = 'sandbox-uuid:%s' % app_uuid
-
-            tl_logger.info("Inserting local timeline pin '%s' (guid=%s) for app %s", pin_id, guid, app_uuid)
-            timeline.handle_pin_create(pin, manual=True)
-
-        elif method == 'DELETE':
-            path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
-            if not path_after_pins:
-                raise Exception("No pin id in DELETE URL")
-            pin_id = unquote(path_after_pins)
-            guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
-            tl_logger.info("Deleting local timeline pin '%s' (guid=%s)", pin_id, guid)
-            try:
-                timeline.handle_pin_delete({'guid': str(guid)})
-            except Exception:
-                pass  # Pin may not exist, which is fine for DELETE
-
-        else:
-            raise Exception("Unsupported method %s for timeline API" % method)
-
-        # Simulate successful response
-        self.readyState = self.DONE
-        self.status = 200
-        self.statusText = 'OK'
-        self.responseText = '{}'
-        if self.responseType == "json":
-            self.response = {}
-        else:
-            self.response = self.responseText
-
-    def _do_send(self):
-        self._sent = True
-
-        # Intercept timeline API requests and handle locally
-        if self._is_timeline_api_request():
-            try:
-                self._handle_timeline_api_request()
-                self._trigger_async_event("load", ProgressEvent, (self._runtime,))
-            except Exception as e:
-                self.status = 500
-                self.statusText = str(e)
-                self.readyState = self.DONE
-                self.responseText = str(e)
-                self.response = self.responseText
-            finally:
-                self._trigger_async_event("loadend", ProgressEvent, (self._runtime,))
-                self._trigger_async_event("readystatechange")
-            return
-
-        req = self._session.prepare_request(self._request)
         try:
-            if self.timeout:
-                timeout = self.timeout / 1000.0
+            if method in ('PUT', 'POST'):
+                if body is None:
+                    raise Exception("No body provided for timeline pin insert")
+                pin = _json.loads(body)  # str, or bytes from an ArrayBuffer body
+                path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
+                if path_after_pins:
+                    pin_id = unquote(path_after_pins)
+                elif 'id' in pin:
+                    pin_id = str(pin['id'])
+                else:
+                    raise Exception("No pin id found in URL or body")
+
+                guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+                now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                pin['guid'] = str(guid)
+                pin['createTime'] = now
+                pin['updateTime'] = now
+                pin['topicKeys'] = pin.get('topicKeys', [])
+                pin['source'] = 'sdk'
+                pin['dataSource'] = 'sandbox-uuid:%s' % app_uuid
+                tl_logger.info("Inserting local timeline pin '%s' (guid=%s) for app %s", pin_id, guid, app_uuid)
+                timeline.handle_pin_create(pin, manual=True)
+            elif method == 'DELETE':
+                path_after_pins = path.split('/v1/user/pins/')[-1].strip('/')
+                if not path_after_pins:
+                    raise Exception("No pin id in DELETE URL")
+                pin_id = unquote(path_after_pins)
+                guid = uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, '%s.pin.developer.getpebble.com' % pin_id)
+                tl_logger.info("Deleting local timeline pin '%s' (guid=%s)", pin_id, guid)
+                try:
+                    timeline.handle_pin_delete({'guid': str(guid)})
+                except Exception:
+                    pass
             else:
-                timeout = None
-            self._response = self._session.send(req, timeout=timeout, verify=True)
-            self.readyState = self.DONE
-            self.status = self._response.status_code
-            self.statusText = self._response.reason
-            self.responseText = self._response.text
+                raise Exception("Unsupported method %s for timeline API" % method)
+        except Exception as e:
+            return {'error': True, 'status': 500, 'statusText': str(e)}
 
-            if self.responseType == "json":
-                self.response = self._response.json()
-            elif self.responseType == "arraybuffer":
-                self.response = v8.JSObject.create(self._runtime.context.locals.Uint8Array, (v8.JSArray(list(bytearray(self._response.content))),)).buffer
-            else:
-                self.response = self.responseText
+        return {'status': 200, 'statusText': 'OK', 'responseText': '{}',
+                'response': {} , 'headers': {}}
 
-            self._trigger_async_event("load", ProgressEvent, (self._runtime,))
-        except requests.exceptions.Timeout:
-            self._trigger_async_event("timeout", ProgressEvent, (self._runtime,))
-            self.readyState = self.DONE
-        except requests.exceptions.RequestException as e:
-            self.status = 0
-            self.statusText = str(e)
-            self.readyState = self.DONE
-        finally:
-            self._trigger_async_event("loadend", ProgressEvent, (self._runtime,))
-            self._trigger_async_event("readystatechange")
 
-    def _trigger_async_event(self, event_name, event=None, event_params=(), params=()):
-        def go():
-            if event is not None:
-                self.triggerEvent(event_name, event(*event_params), *params)
-            else:
-                self.triggerEvent(event_name, *params)
-        if self._async:
-            go()
-        else:
-            self._runtime.enqueue(go)
-
-    def send(self, data=None):
-        if data is not None:
-            if not isinstance(data, str) and str(data) == '[object ArrayBuffer]':
-                uint8_array = self._runtime.context.locals.Uint8Array
-                data_array = uint8_array.create(uint8_array, (data,))
-                self._request.data = bytes(bytearray(data_array[str(x)] for x in range(data_array.length)))
-            else:
-                self._request.data = str(data)
-        self._thread = self._runtime.group.spawn(self._do_send)
-        if not self._async:
-            self._thread.join()
-
-    def getResponseHeader(self, header):
-        if self._response is not None:
-            return self._response.headers.get(header, None)
-        else:
-            return None
-
-    def getAllResponseHeaders(self):
-        if self._response is None:
-            return None
-        # https://xhr.spec.whatwg.org/#the-getallresponseheaders()-method
-        return '\x0d\x0a'.join('%s\x3a\x20%s' % (k, v) for k, v in self._response.headers.items())
-
-    def abort(self):
-        if self._sent and self._thread is not None:
-            self._thread.kill(block=False)
+class XHRExtension:
+    def __init__(self, runtime):
+        session = requests.Session()
+        if runtime.block_private_addresses:
+            adapter = NonlocalHTTPAdapter()
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+        runtime.context.expose("__xhr", XHRWorker(runtime, session), ['perform', 'performSync', 'abort'])
+        runtime.run_js(_XHR_JS)
 
 
 def prepare_xhr(runtime):
-    session = requests.Session()
-    if runtime.block_private_addresses:
-        adapter = NonlocalHTTPAdapter()
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-
-    runtime.register_syscall('__get_xhr', lambda : XMLHttpRequest)
-    return runtime.context.locals._init_xhr(runtime, session)
+    # XHR is fully set up in XHRExtension.__init__; nothing deferred.
+    pass

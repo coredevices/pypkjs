@@ -1,35 +1,15 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
 import time
 import requests
 import pygeoip
 import os.path
 
-Position = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Position, args)
-
-Coordinates = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Coordinates, args)
-
 
 class Geolocation(object):
     def __init__(self, runtime):
         self.runtime = runtime
-
-        runtime.run_js("""
-            Position = (function(coords, timestamp) {
-                this.coords = coords;
-                this.timestamp = timestamp;
-            });
-        """)
-
-        runtime.run_js("""
-            Coordinates = (function(long, lat, accuracy) {
-                this.longitude = long
-                this.latitude = lat
-                this.accuracy = accuracy
-            });
-        """)
 
     def _get_position(self, success, failure):
         try:
@@ -41,11 +21,20 @@ class Geolocation(object):
             if record is None:
                 if callable(failure):
                     self.runtime.enqueue(failure)
+                return
         except (requests.RequestException, pygeoip.GeoIPError):
             if callable(failure):
                 self.runtime.enqueue(failure)
         else:
-            self.runtime.enqueue(success, Position(self.runtime, Coordinates(self.runtime, record['longitude'], record['latitude'], 1000), round(time.time() * 1000)))
+            position = {
+                'coords': {
+                    'longitude': record['longitude'],
+                    'latitude': record['latitude'],
+                    'accuracy': 1000,
+                },
+                'timestamp': round(time.time() * 1000),
+            }
+            self.runtime.enqueue(success, position)
 
     def _enabled(self):
         return True

@@ -1,41 +1,24 @@
 
 __author__ = 'katharine'
 
-import STPyV8 as v8
-
 from .exceptions import JSRuntimeException
+from .qjs import JSError
+
 
 class EventExtension:
     def __init__(self, runtime):
+        # The base Event constructor lives in runtime.setup(). ProgressEvent (used
+        # by XHR) extends it.
         runtime.run_js("""
-            Event = function(event_type, event_init_dict) {
-                var self = this;
-                this.stopPropagation = function() {};
-                this.stopImmediatePropagation = function() { self._aborted = true; }
-                this.preventDefault = function() { self.defaultPrevented = true; }
-                this.initEvent = function(event_type, bubbles, cancelable) {
-                    self.type = event_type;
-                    self.bubbles = bubbles;
-                    self.cancelable = cancelable
-                };
-                if(!event_init_dict) event_init_dict = {};
-        
-                this.type = event_type;
-                this.bubbles = event_init_dict.bubbles || false;
-                this.cancelable = event_init_dict.cancelable || false;
-                this.defaultPrevented = false;
-                this.target = null;
-                this.currentTarget = null;
-                this.eventPhase = 2;
-                this._aborted = false;
+            var ProgressEvent = function(computable, loaded, total) {
+                Event.call(this, 'progress');
+                this.lengthComputable = computable || false;
+                this.loaded = loaded || 0;
+                this.total = total || 0;
             };
-            Event.NONE = 0;
-            Event.CAPTURING_PHASE = 1;
-            Event.AT_TARGET = 2;
-            Event.BUBBLING_PHASE = 3;
+            ProgressEvent.prototype = Object.create(Event.prototype);
+            ProgressEvent.prototype.constructor = ProgressEvent;
         """)
-
-Event = lambda runtime, *args: v8.JSObject.create(runtime.context.locals.Event, args)
 
 
 class EventSourceMixin(object):
@@ -53,41 +36,39 @@ class EventSourceMixin(object):
         if listener is None:
             del self.__listeners[event]
         else:
-            for i, listener_i in enumerate(self.__listeners[event]):
-                if listener_i == listener:
-                    del listener[i]
-                    break
+            # js_same, not !=: the same JS function arrives as a fresh wrapper
+            # object on every crossing, so Python equality never matches.
+            self.__listeners[event] = [l for l in self.__listeners[event]
+                                       if not self.__runtime.js_same(l, listener)]
 
-    def triggerEvent(self, event_name, event=None, *params):
-        if event is None:
-            event = Event(self.__runtime, event_name)
+    def triggerEvent(self, event_name, event_type=None, data=None):
+        """Dispatch event_name to its listeners and on<event_name> handler.
 
+        The JS Event is built inside go(), on the event loop greenlet: callers may
+        run on any greenlet, and touching the JS engine from one while another is
+        suspended mid-call (e.g. in a sync XHR) can crash QuickJS."""
         def go():
-            for listener in self.__listeners.get(event_name, []):
+            event = self.__runtime.build_event(event_type or event_name, data)
+            for listener in list(self.__listeners.get(event_name, [])):
                 try:
-                    listener.call(self, event, *params)
-                except (v8.JSError, JSRuntimeException) as e:
-                    self.__runtime.log_output(e.stackTrace)
+                    self.__runtime.call_js(listener, event)
+                except (JSError, JSRuntimeException) as e:
+                    self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
                 except Exception as e:
                     self.__runtime.log_output(str(e))
                     raise
                 finally:
-                    if event._aborted:
+                    if self.__runtime.event_aborted(event):
                         break
-            #TODO: Figure out if these come before or after addEventListener handlers.
-            try:
-                dom_event = getattr(self, "on" + event_name)
-            except AttributeError:
-                pass
-            else:
+            # An on<event> handler property, if the subclass exposes one.
+            dom_event = getattr(self, "on" + event_name, None)
+            if dom_event is not None:
                 try:
-                    if dom_event is not None:
-                        dom_event.call(self, event, *params)
-                except (v8.JSError, JSRuntimeException) as e:
-                    self.__runtime.log_output(e.stackTrace)
+                    self.__runtime.call_js(dom_event, event)
+                except (JSError, JSRuntimeException) as e:
+                    self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
                 except Exception as e:
                     self.__runtime.log_output(str(e))
                     raise
 
         self.__runtime.enqueue(go)
-

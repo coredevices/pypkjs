@@ -2,7 +2,7 @@
 __author__ = 'katharine'
 
 import gevent
-import STPyV8 as v8
+
 
 class Timers(object):
     def __init__(self, runtime):
@@ -10,12 +10,25 @@ class Timers(object):
         self.timers = {}
         self.counter = 1
 
-        runtime.register_syscall("__get_timers", lambda : self)
-
+        runtime.context.expose("__timers", self,
+                               ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'])
+        # Per the HTML spec the delay is optional and any extra arguments are passed
+        # to the callback; bind them JS-side so Python only sees (fn, delay).
         runtime.run_js("""
         (function() {
-            var _timers = exec('__get_timers', []);
-            _make_proxies(this, _timers, ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']);
+            function wrap(fn, args) {
+                if (typeof fn !== 'function' || args.length === 0) return fn;
+                return function() { return fn.apply(null, args); };
+            }
+            function delay(ms) { ms = Number(ms); return ms > 0 ? ms : 0; }
+            window.setTimeout = function(fn, ms) {
+                return __timers.setTimeout(wrap(fn, Array.prototype.slice.call(arguments, 2)), delay(ms));
+            };
+            window.setInterval = function(fn, ms) {
+                return __timers.setInterval(wrap(fn, Array.prototype.slice.call(arguments, 2)), delay(ms));
+            };
+            window.clearTimeout = function(id) { __timers.clearTimeout(id); };
+            window.clearInterval = function(id) { __timers.clearInterval(id); };
         })();
         """)
 
