@@ -8,6 +8,7 @@ import json
 import logging
 
 import gevent
+import gevent.event
 
 from .. import plugins
 from ..plugins import manifest as manifests
@@ -16,9 +17,10 @@ logger = logging.getLogger('pypkjs.javascript.plugins')
 
 DEFAULT_ACTION_TIMEOUT_MS = 15000
 MAX_ACTION_TIMEOUT_MS = 60000
+CONFIG_MESSAGE_TIMEOUT = 30
 
 # The plugin half of the phone app's startup.js, with its `_Pebble` bridge renamed `__plugins`,
-# and the config-page push that apps beside it call.
+# and its config page messaging.
 _PLUGINS_JS = r'''(function (global) {
     const sourceSubscriptions = new Map();
     let sourceSubscriptionIdCounter = 0;
@@ -131,8 +133,22 @@ _PLUGINS_JS = r'''(function (global) {
     global.Pebble.subscribeToSource = PluginAPI.subscribeToSource;
     global.Pebble.enumeratePlugins = PluginAPI.enumeratePlugins;
     global.Pebble.invokeAction = PluginAPI.invokeAction;
-    // Config pages can't hold a message channel here; the app drops these too while none is open.
-    global.Pebble.sendConfigMessage = function (message) {};
+    /** Push at this app's config page, while it is open. No reply. */
+    global.Pebble.sendConfigMessage = function (message) {
+        __plugins.sendConfigMessage(JSON.stringify(message === undefined ? null : message));
+    };
+    // A message from this app's config page: a 'configmessage' event whose respond() answers it.
+    global.__configMessageEvent = function (requestId, data) {
+        var event = new Event('configmessage');
+        var settled = false;
+        event.data = data;
+        event.respond = function (reply) {
+            if (settled) return;
+            settled = true;
+            __plugins.configMessageReply(requestId, JSON.stringify(reply === undefined ? null : reply));
+        };
+        return event;
+    };
 })(this);
 '''
 
@@ -142,8 +158,11 @@ class PluginsExtension(object):
         self.runtime = runtime
         self.registry = runtime.runner.plugins
         self.subscriptions = {}
+        self._config_replies = {}
+        self._next_config_id = 0
         runtime.context.expose('__plugins', self,
-                               ['subscribeToSource', 'unsubscribeSource', 'invokeAction', 'enumeratePlugins'])
+                               ['subscribeToSource', 'unsubscribeSource', 'invokeAction', 'enumeratePlugins',
+                                'sendConfigMessage', 'configMessageReply'])
         runtime.run_js(_PLUGINS_JS)
 
     @property
@@ -226,6 +245,30 @@ class PluginsExtension(object):
 
     def enumeratePlugins(self):
         return json.dumps(self.registry.summaries())
+
+    def sendConfigMessage(self, message_json):
+        self.runtime.runner.config_pages.push(self.runtime.pbw.uuid, 'pkjs', message_json)
+
+    def config_message(self, message_json):
+        """The app's answer (JSON) to a message from its config page; None if it gives none."""
+        self._next_config_id += 1
+        request_id = self._next_config_id
+        reply = self._config_replies[request_id] = gevent.event.AsyncResult()
+
+        def go():
+            event = self.runtime.context.eval('globalThis.__configMessageEvent(%d, %s)' % (request_id, message_json))
+            if not self.runtime.pjs.pebble.dispatch_event('configmessage', event):
+                self.configMessageReply(request_id, json.dumps({'error': 'no configmessage listener registered'}))
+        self.runtime.enqueue(go)
+        try:
+            return reply.wait(CONFIG_MESSAGE_TIMEOUT)
+        finally:
+            self._config_replies.pop(request_id, None)
+
+    def configMessageReply(self, request_id, reply_json):
+        reply = self._config_replies.get(int(request_id))
+        if reply is not None and not reply.ready():
+            reply.set(reply_json)
 
     def _log_grants(self, permissions, what):
         if permissions:

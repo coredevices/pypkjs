@@ -29,12 +29,15 @@ from pypkjs.javascript.runtime import JSRuntime
 from pypkjs.plugins.builtin import FixtureStore, builtin_plugins
 from pypkjs.plugins.registry import PluginRegistry
 from pypkjs.runner import Runner
+from pypkjs.runner.config_pages import ConfigPages
 from pypkjs.runner.websocket import WebsocketRunner
 
 
 class HarnessRunner(object):
-    """The slice of Runner that plugins use."""
+    """The slice of Runner that plugins and config pages use."""
     _load_plugin = Runner._load_plugin
+    _load_config_page = Runner._load_config_page
+    app_title = Runner.app_title
 
     def __init__(self, persist_dir, fixtures):
         self.persist_dir = persist_dir
@@ -49,6 +52,11 @@ class HarnessRunner(object):
         self.plugin_fixtures.load_file()
         self.appmessage = mock.MagicMock()
         self.appmessage.send_message.side_effect = self._send_message
+        self.pbws = {}
+        self.config_page_files = {}
+        self.config_pages = ConfigPages(self)
+        self.js = None
+        self.running_uuid = None
 
     def _send_message(self, uuid, message):
         self.log_output('APPMSG ' + json.dumps({str(k): v.value if not isinstance(v.value, bytes) else list(v.value)
@@ -58,16 +66,16 @@ class HarnessRunner(object):
     def launch_app(self, uuid):
         self.log_output('LAUNCH %s' % uuid)
 
-    def app_title(self, uuid):
-        return str(uuid)
-
     def log_output(self, message):
         self.logs.append(message)
 
     def load(self, path):
         with zipfile.ZipFile(path) as z:
             appinfo = json.loads(z.open('appinfo.json').read())
-            self._load_plugin(z, UUID(appinfo['uuid']), appinfo)
+            uuid = UUID(appinfo['uuid'])
+            self._load_plugin(z, uuid, appinfo)
+            self._load_config_page(z, uuid, appinfo)
+            self.pbws[uuid] = Runner.PBW(uuid, None, appinfo, {}, [])
 
 
 class HarnessWebsocket(object):

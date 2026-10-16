@@ -62,8 +62,13 @@ Apps can use the Core phone app's plugin API (`Pebble.subscribeToSource`,
   watch settings, watch state) serve fixture data. `watch/launch_app` and
   `launch_previous_app` really launch apps on the emulator.
 * Every permission a source or action asks of its caller is granted.
-* `Pebble.oauth` calls fail with `AUTH_REQUIRED`, and plugin config pages can't message
-  their plugin.
+* `Pebble.oauth` calls fail with `AUTH_REQUIRED`.
+* Config pages are served with the phone app's page-side `Pebble` API
+  (`Pebble.sendMessage('plugin' | 'pkjs', message)`, `ready` and `message` events), at
+  `http://localhost:<port>/config/<uuid>/`. That covers a pbw's `configPage` (which, as on
+  the phone, is shown instead of `showConfiguration`) and pages an app opens with
+  `Pebble.openURL('data:...')`. `pebble emu-app-config --uuid <uuid>` opens the page of a
+  pbw that isn't running, such as a plugin's.
 
 To change what the built-ins serve, write a JSON file of readings keyed by source, in
 the wire format the phone app sends, and pass it as `--plugin-fixtures` (or set

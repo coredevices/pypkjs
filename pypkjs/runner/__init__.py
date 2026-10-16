@@ -21,6 +21,7 @@ from libpebble2.util.bundle import PebbleBundle
 from libpebble2.services.appmessage import AppMessageService
 import pypkjs.javascript as javascript
 import pypkjs.javascript.runtime
+from .config_pages import ConfigPages
 from .pebble_manager import PebbleManager
 from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
@@ -61,6 +62,9 @@ class Runner(object):
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
         self.plugins = PluginRegistry()
+        self.config_pages = ConfigPages(self)
+        # Config pages shipped in a pbw (appinfo configPage that isn't a URL), by uuid.
+        self.config_page_files = {}
         self.plugin_fixtures = FixtureStore(plugin_fixtures, self.log_output)
         for plugin in builtin_plugins(self.plugin_fixtures, self):
             self.plugins.register(plugin)
@@ -93,6 +97,7 @@ class Runner(object):
                 manifest = json.loads(appinfo)
                 uuid = UUID(manifest['uuid'])
                 self._load_plugin(z, uuid, manifest)
+                self._load_config_page(z, uuid, manifest)
             if cache and self._pbw_cache_dir is not None:
                 shutil.copy(pbw_path, os.path.join(self._pbw_cache_dir, '%s.pbw' % uuid))
             self.pbws[uuid] = self.PBW(uuid, src, manifest, layouts, prefixes)
@@ -122,6 +127,16 @@ class Runner(object):
         served = ['%s/%s' % (s['category'], item) for s in plugin_manifest['sources'] for item in s['items']]
         self.logger.info("Loaded plugin %s (%s): sources %s, actions %s", name, uuid, served or 'none',
                          [a['name'] for a in plugin_manifest['actions']] or 'none')
+
+    def _load_config_page(self, z, uuid, appinfo):
+        page = appinfo.get('configPage')
+        self.config_page_files.pop(str(uuid), None)
+        if not isinstance(page, str) or page.startswith(('http://', 'https://')):
+            return
+        try:
+            self.config_page_files[str(uuid)] = z.open(page).read().decode('utf-8')
+        except KeyError:
+            self.log_output("Config page '%s' is missing from the pbw." % page)
 
     def load_cached_pbws(self):
         cache_dir = self._pbw_cache_dir
@@ -198,7 +213,16 @@ class Runner(object):
         if self.js is None:
             self.log_output("No JS found, can't show configuration.")
             return
-        self.js.do_config()
+        # As in the phone app, a pbw's own config page wins over its JS's showConfiguration.
+        url = self.config_page_url(self.running_uuid)
+        if url is not None and self.pbws[self.running_uuid].manifest.get('configPage'):
+            self.open_config_page(url, self.js.pjs.pebble._handle_config_response)
+        else:
+            self.js.do_config()
+
+    def config_page_url(self, uuid):
+        """Where a pbw's config page is served with its Pebble.sendMessage bridge, if anywhere."""
+        return None
 
     def log_output(self, message):
         raise NotImplemented

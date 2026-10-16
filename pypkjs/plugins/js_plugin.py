@@ -29,6 +29,8 @@ logger = logging.getLogger('pypkjs.plugins')
 
 REQUEST_TIMEOUT = 20
 START_TIMEOUT = 10
+# A config page's request can wait on the user (an interactive sign-in, say).
+CONFIG_REQUEST_TIMEOUT = 300
 
 
 class JsPlugin(Plugin):
@@ -39,6 +41,10 @@ class JsPlugin(Plugin):
         self.runner = runner
         self._lock = gevent.lock.Semaphore()
         self._secure_storage = SecureStorage(runner.persist_dir, uuid)
+        self._config_lock = gevent.lock.Semaphore()
+        self._config_session = None
+        self._config_greenlet = None
+        self._config_push = None
 
     def read(self, category, item, properties, icon_pixel_size):
         request = {'kind': 'source', 'category': category, 'item': item}
@@ -80,6 +86,64 @@ class JsPlugin(Plugin):
                 session.stop()
                 greenlet.join(timeout=2)
                 greenlet.kill(block=False)
+
+    # ------------------------------------------------------------------ config page
+    #
+    # While its config page is open a plugin keeps one session running, so the page talks to
+    # the same script throughout.
+
+    def open_config_session(self, push):
+        """Start the config session; push(json) gets the plugin's Pebble.sendConfigMessage calls."""
+        with self._config_lock:
+            self._config_push = push
+            self._close_config_session_locked()
+            self._open_config_session_locked()
+
+    def close_config_session(self):
+        with self._config_lock:
+            self._config_push = None
+            self._close_config_session_locked()
+
+    def config_message(self, message_json):
+        """The plugin's reply (JSON) to a message from its config page; None if it gives none."""
+        with self._config_lock:
+            session = self._open_config_session_locked()
+        if session is None:
+            return None
+        return session.dispatch_config(message_json, CONFIG_REQUEST_TIMEOUT)
+
+    def push_config_message(self, message_json):
+        if self._config_push is None:
+            self.log('warn', 'sendConfigMessage: no config page is open')
+        else:
+            self._config_push(message_json)
+
+    def retire(self):
+        super(JsPlugin, self).retire()
+        self.close_config_session()
+
+    def _open_config_session_locked(self):
+        if self.retired:
+            return None
+        if self._config_session is not None:
+            return self._config_session
+        session = PluginSession(self)
+        greenlet = gevent.spawn(session.run)
+        if not session.started.wait(START_TIMEOUT):
+            session.stop()
+            greenlet.join(timeout=2)
+            greenlet.kill(block=False)
+            return None
+        self._config_session, self._config_greenlet = session, greenlet
+        return session
+
+    def _close_config_session_locked(self):
+        session, greenlet = self._config_session, self._config_greenlet
+        self._config_session = self._config_greenlet = None
+        if session is not None:
+            session.stop()
+            greenlet.join(timeout=2)
+            greenlet.kill(block=False)
 
     def log(self, level, message):
         prefix = '' if level == 'info' else '%s: ' % level.upper()
@@ -149,10 +213,17 @@ class PluginSession(JSRuntime):
             self.group.kill(timeout=2)
 
     def dispatch(self, request_json, timeout):
+        return self._call('__pluginDispatch', request_json, timeout)
+
+    def dispatch_config(self, message_json, timeout):
+        return self._call('__pluginConfigMessage', message_json, timeout)
+
+    def _call(self, function, json_argument, timeout):
+        """Call a host-shim function with a request id and a JSON argument; wait for its respond()."""
         self._next_id += 1
         request_id = self._next_id
         result = self._pending[request_id] = gevent.event.AsyncResult()
-        self.enqueue(self.context.eval, 'globalThis.__pluginDispatch(%d, %s)' % (request_id, request_json))
+        self.enqueue(self.context.eval, 'globalThis.%s(%d, %s)' % (function, request_id, json_argument))
         try:
             return result.wait(timeout)
         finally:
@@ -172,7 +243,7 @@ class PluginSession(JSRuntime):
         self.plugin.log(level, message)
 
     def configMessage(self, message):
-        self.plugin.log('warn', 'sendConfigMessage: no config page is open')
+        self.plugin.push_config_message(message)
 
     def refreshSources(self, keys_json):
         try:

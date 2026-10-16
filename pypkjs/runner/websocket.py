@@ -88,7 +88,16 @@ class WebsocketRunner(Runner):
     def log_output(self, message):
         self.broadcast(b'\x02' + message.encode('utf-8'))
 
+    def config_page_url(self, uuid):
+        if uuid is None or not self.config_pages.has_page(uuid):
+            return None
+        return 'http://localhost:%d%s' % (self.port, self.config_pages.path_for(uuid))
+
     def open_config_page(self, url, callback):
+        if url.startswith('data:') and self.running_uuid is not None:
+            # Served from here, so the page gets the Pebble.sendMessage bridge.
+            self.config_pages.open_data_page(self.running_uuid, url)
+            url = self.config_page_url(self.running_uuid)
         self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url.encode('utf-8')), url.encode('utf-8')))
         self.config_callback = callback
 
@@ -99,6 +108,8 @@ class WebsocketRunner(Runner):
         self.broadcast(b'\x00' + message)
 
     def handle_ws(self, environ, start_response):
+        if environ['PATH_INFO'].startswith('/config/'):
+            return self.config_pages.handle(environ, start_response)
         if environ['PATH_INFO'] == '/':
             ws = Websocket(environ['wsgi.websocket'])
             self.websockets.append(ws)
@@ -109,6 +120,9 @@ class WebsocketRunner(Runner):
                 except WebSocketError:
                     break
             self.on_close(ws)
+            return []
+        start_response('404 Not Found', [('Content-Type', 'text/plain')])
+        return [b'Not found.']
 
     def on_open(self, ws, *args, **kwargs):
         ws.authed = not self.requires_auth
