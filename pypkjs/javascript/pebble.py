@@ -8,7 +8,6 @@ import dateutil.parser
 from dateutil.tz import tzlocal
 import logging
 import requests
-import struct
 import time
 import traceback
 from uuid import UUID
@@ -100,7 +99,6 @@ class Pebble(events.EventSourceMixin):
     def _handle_message(self, tid, uuid, dictionary):
         if uuid != self.uuid:
             logger.warning("Discarded message for %s (expected %s)", uuid, self.uuid)
-            self.pebble._send_message("APPLICATION_MESSAGE", struct.pack('<BB', 0x7F, tid))  # ACK
             return
 
         app_keys = dict(list(zip(list(self.app_keys.values()), list(self.app_keys.keys()))))
