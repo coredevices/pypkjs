@@ -113,6 +113,12 @@ commands that have one) on success, and `0x0d 0x01` followed by an error message
 * `0x03` + uuid: remove a plugin-only pbw, including from the app cache it's reloaded from at
   startup. A watchapp's plugin goes with the app, so it can't be removed this way.
 
+Geolocation looks the phone's position up from this machine's IP address. To put it somewhere
+else, send `0x0e` followed by `{"latitude": 48.2, "longitude": 16.37}` over the phone websocket
+(`pebble emu-set-location` does this); `0x0e` + `null` goes back to the IP lookup. The position is
+kept in the persist directory, so it survives restarts. The reply is `0x0e 0x00`, or `0x0e 0x01`
+followed by an error message.
+
 Platforms
 -------
 

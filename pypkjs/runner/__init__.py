@@ -61,6 +61,7 @@ class Runner(object):
         self.urls = URLManager()
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
+        self.location = self._load_location()
         self.plugins = PluginRegistry()
         self.config_pages = ConfigPages(self)
         # Config pages shipped in a pbw (appinfo configPage that isn't a URL), by uuid.
@@ -172,6 +173,37 @@ class Runner(object):
                 os.remove(cached)
         self.logger.info("Removed plugin %s (%s)", plugin.name, pbw_uuid)
         return plugin.name
+
+    @property
+    def _location_file(self):
+        return os.path.join(self.persist_dir, 'location.json') if self.persist_dir is not None else None
+
+    def _load_location(self):
+        try:
+            with open(self._location_file) as f:
+                return self._checked_location(json.load(f))
+        except (TypeError, OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _checked_location(location):
+        latitude, longitude = float(location['latitude']), float(location['longitude'])
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValueError("%s, %s is not a place on Earth" % (latitude, longitude))
+        return {'latitude': latitude, 'longitude': longitude}
+
+    def set_location(self, location):
+        """Where geolocation puts the phone from now on, kept across restarts; None goes back to
+        looking it up from this machine's IP address."""
+        self.location = self._checked_location(location) if location is not None else None
+        if self._location_file is None:
+            return
+        if self.location is None:
+            if os.path.exists(self._location_file):
+                os.remove(self._location_file)
+        else:
+            with open(self._location_file, 'w') as f:
+                json.dump(self.location, f)
 
     def load_cached_pbws(self):
         cache_dir = self._pbw_cache_dir

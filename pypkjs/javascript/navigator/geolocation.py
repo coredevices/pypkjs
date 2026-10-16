@@ -12,6 +12,10 @@ class Geolocation(object):
         self.runtime = runtime
 
     def _get_position(self, success, failure):
+        fixed = getattr(self.runtime.runner, 'location', None)
+        if fixed is not None:
+            self.runtime.enqueue(success, self._position(fixed['latitude'], fixed['longitude'], 10))
+            return
         try:
             resp = requests.get('https://api.ipify.org')
             resp.raise_for_status()
@@ -26,15 +30,18 @@ class Geolocation(object):
             if callable(failure):
                 self.runtime.enqueue(failure)
         else:
-            position = {
-                'coords': {
-                    'longitude': record['longitude'],
-                    'latitude': record['latitude'],
-                    'accuracy': 1000,
-                },
-                'timestamp': round(time.time() * 1000),
-            }
-            self.runtime.enqueue(success, position)
+            self.runtime.enqueue(success, self._position(record['latitude'], record['longitude'], 1000))
+
+    @staticmethod
+    def _position(latitude, longitude, accuracy):
+        return {
+            'coords': {
+                'longitude': longitude,
+                'latitude': latitude,
+                'accuracy': accuracy,
+            },
+            'timestamp': round(time.time() * 1000),
+        }
 
     def _enabled(self):
         return True

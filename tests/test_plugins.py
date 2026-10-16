@@ -454,3 +454,28 @@ def test_base64(tmp_path):
     out = fetch_results(tmp_path, "return [btoa('\\x00\\xffhi'), atob('AP9oaQ==') === '\\x00\\xffhi'];")
     assert out == ['AP9oaQ==', True]
 
+
+# ---------------------------------------------------------------------------- location
+
+
+def test_emulator_location_is_set_kept_and_cleared(tmp_path):
+    persist = tmp_path / 'persist'
+    persist.mkdir()
+    (persist / 'location.json').write_text(json.dumps({'latitude': 48.2, 'longitude': 16.37}))
+    logs = run_js("""
+        function where(tag) {
+            navigator.geolocation.getCurrentPosition(function (p) {
+                console.log(tag + ' ' + p.coords.latitude + ',' + p.coords.longitude + ' ' + p.coords.accuracy);
+            });
+        }
+        where('A');
+        setTimeout(function () { where('B'); }, 600);
+    """, [], secs=1.2, persist=str(persist), ws_commands=[
+        [0.3, json.dumps({'latitude': 40.7, 'longitude': -74.0}), 0x0e],
+        [0.4, json.dumps({'latitude': 91, 'longitude': 0}), 0x0e],
+        [0.9, 'null', 0x0e],
+    ])
+    assert [line for line in logs if line[:2] in ('A ', 'B ')] == ['A 48.2,16.37 10', 'B 40.7,-74 10']
+    assert [line for line in logs if line.startswith('WS ')] == [
+        'WS 0', 'WS 1 91.0, 0.0 is not a place on Earth', 'WS 0']
+    assert not (persist / 'location.json').exists()

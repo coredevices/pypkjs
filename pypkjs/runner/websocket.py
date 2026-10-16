@@ -158,6 +158,7 @@ class WebsocketRunner(Runner):
             0x0b: self.do_qemu_command,
             0x0c: self.do_timeline_command,
             0x0d: self.do_plugin_command,
+            0x0e: self.do_location_command,
         }
 
         if opcode in opcode_handlers:
@@ -277,6 +278,17 @@ class WebsocketRunner(Runner):
             ws.send(bytearray([0x0d, 0x01]) + str(e).encode('utf-8'))
         else:
             ws.send(bytearray([0x0d, 0x00]) + (json.dumps(result).encode('utf-8') if result is not None else b''))
+
+    @must_auth
+    def do_location_command(self, ws, message):
+        """JSON {"latitude": float, "longitude": float}, or null to go back to an IP lookup: where
+        geolocation puts the phone. Replies 0x0e 0x00, or 0x0e 0x01 + an error message."""
+        try:
+            self.set_location(json.loads(bytes(message).decode('utf-8')))
+        except (ValueError, KeyError, TypeError) as e:
+            ws.send(bytearray([0x0e, 0x01]) + str(e).encode('utf-8'))
+        else:
+            ws.send(bytearray([0x0e, 0x00]))
 
 
 class WebsocketLogHandler(logging.Handler):

@@ -5,10 +5,10 @@ quickjs-ng extension deadlocks at interpreter shutdown).
 
 stdin: JSON {"src": str, "secs": float, "pbws": [path], "persist": str|null,
              "app_uuid": str|null, "app_keys": {name: int}, "fixtures": path|null,
-             "ws_commands": [[delay, payload]]}
+             "ws_commands": [[delay, payload, opcode?]]}
 
 The fixtures file is watched for changes; each ws_commands payload (a string) is sent as a
-websocket 0x0d command after `delay` seconds, and the reply logged as "WS <byte> [<payload>]".
+websocket command (opcode 0x0d unless given) after `delay` seconds, and the reply logged as "WS <byte> [<payload>]".
 stdout (last line): JSON list of log lines. AppMessages the app sends are logged as
 "APPMSG <json>"; app launches as "LAUNCH <uuid>".
 """
@@ -42,10 +42,15 @@ class HarnessRunner(object):
     plugin_list = Runner.plugin_list
     remove_plugin = Runner.remove_plugin
     _pbw_cache_dir = Runner._pbw_cache_dir
+    _location_file = Runner._location_file
+    _load_location = Runner._load_location
+    _checked_location = staticmethod(Runner._checked_location)
+    set_location = Runner.set_location
 
     def __init__(self, persist_dir, fixtures):
         self.persist_dir = persist_dir
         self.block_private_addresses = False
+        self.location = self._load_location()
         self.logger = logging.getLogger('harness')
         self.logs = []
         self.previous_app_uuid = None
@@ -94,10 +99,11 @@ class HarnessWebsocket(object):
         self.runner.log_output('WS %d' % message[1] + (' ' + reply if reply else ''))
 
 
-def send_plugin_command(runner, delay, payload):
+def send_ws_command(runner, delay, payload, opcode=0x0d):
     gevent.sleep(delay)
     runner.requires_auth = False
-    WebsocketRunner.do_plugin_command(runner, HarnessWebsocket(runner), bytearray(payload.encode('utf-8')))
+    handler = {0x0d: WebsocketRunner.do_plugin_command, 0x0e: WebsocketRunner.do_location_command}[opcode]
+    handler(runner, HarnessWebsocket(runner), bytearray(payload.encode('utf-8')))
 
 
 class HarnessRuntime(JSRuntime):
@@ -113,8 +119,8 @@ def main():
 
     if config.get('fixtures'):
         gevent.spawn(runner.plugin_fixtures.watch_file, 0.1)
-    for delay, payload in config.get('ws_commands', []):
-        gevent.spawn(send_plugin_command, runner, delay, payload)
+    for command in config.get('ws_commands', []):
+        gevent.spawn(send_ws_command, runner, *command)
 
     pbw = mock.MagicMock()
     pbw.uuid = config.get('app_uuid') or 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
