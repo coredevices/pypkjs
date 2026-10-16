@@ -69,6 +69,9 @@ def from_js(value):
 class JSContext(object):
     def __init__(self):
         self._ctx = quickjs.Context()
+        # The binding can't hand Python a string built by concatenation past ~1000 characters
+        # (quickjs-ng keeps those as ropes: "could not convert args"); substring() flattens one.
+        self._ctx.eval("var __pypkjs_flat = function(v) { return typeof v === 'string' ? v.substring(0) : v; };")
 
     def eval(self, src):
         # NB: this is the QuickJS *JavaScript* engine evaluating the app's JS --
@@ -120,7 +123,8 @@ class JSContext(object):
         __pypkjs_error__ sentinel and is re-thrown here as a normal, catchable
         JS Error (the binding's own path is an uncatchable InternalError that
         escapes the whole eval as SystemError)."""
-        return ("{0} = function() {{ var r = {1}.apply(null, arguments); "
+        return ("{0} = function() {{ "
+                "var r = {1}.apply(null, Array.prototype.map.call(arguments, __pypkjs_flat)); "
                 "if (r && r.__pypkjs_error__) {{ throw new Error(r.__pypkjs_error__); }} "
                 "return r; }};").format(target, native_name)
 

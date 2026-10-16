@@ -171,3 +171,16 @@ def test_glance_callback_during_sync_xhr(server):
         console.log('sync done', s.status);
     """ % server, secs=1.5, glance_delay=0.1)
     assert logs == ['sync done 200', 'glance ok true']
+
+
+def test_long_built_strings_reach_python():
+    # quickjs-ng keeps long concatenations as ropes, which the binding couldn't convert.
+    logs = run_js("""
+        try {
+            Pebble.insertTimelinePin('{"id": "' + 'x'.repeat(2000) + '"}');
+            console.log('ok');
+        } catch (e) {
+            console.log(String(e));
+        }
+    """)
+    assert logs == ['ok']
