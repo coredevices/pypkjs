@@ -23,10 +23,18 @@ import pypkjs.javascript.runtime
 from .pebble_manager import PebbleManager
 from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
+from pypkjs.plugins import manifest as manifests
+from pypkjs.plugins.js_plugin import JsPlugin
+from pypkjs.plugins.registry import PluginRegistry
 
 
 class Runner(object):
     PBW = collections.namedtuple('PBW', ('uuid', 'src', 'manifest', 'layouts', 'prefixes'))
+
+    @staticmethod
+    def is_plugin_only(pbw):
+        """A pbw carrying a plugin and nothing to install on the watch."""
+        return not pbw.prefixes and manifests.loadable_plugin(pbw.manifest) is not None
 
     def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False):
         self.qemu = qemu
@@ -47,10 +55,12 @@ class Runner(object):
         self.urls = URLManager()
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
+        self.plugins = PluginRegistry()
         self.load_cached_pbws()
         self.load_pbws(pbws)
 
     def load_pbws(self, pbws, start=False, cache=False):
+        loaded = []
         for pbw_path in pbws:
             with zipfile.ZipFile(pbw_path) as z:
                 appinfo = z.open('appinfo.json').read()
@@ -69,14 +79,38 @@ class Runner(object):
                         layouts[platform] = json.load(z.open('%s/layouts.json' % platform))
                     except (KeyError, ValueError):
                         layouts[platform] = {}
-            manifest = json.loads(appinfo)
-            uuid = UUID(manifest['uuid'])
+                manifest = json.loads(appinfo)
+                uuid = UUID(manifest['uuid'])
+                self._load_plugin(z, uuid, manifest)
             if cache and self._pbw_cache_dir is not None:
                 shutil.copy(pbw_path, os.path.join(self._pbw_cache_dir, '%s.pbw' % uuid))
             self.pbws[uuid] = self.PBW(uuid, src, manifest, layouts, prefixes)
+            loaded.append(uuid)
             if start:
                 self.start_js(self.pbws[uuid])
         self.logger.info("Ready. Loaded apps: %s", ', '.join(map(str, list(self.pbws.keys()))))
+        return loaded
+
+    def _load_plugin(self, z, uuid, appinfo):
+        plugin_manifest = manifests.loadable_plugin(appinfo)
+        if plugin_manifest is None:
+            if self.plugins.unregister(uuid) is not None:
+                self.logger.info("Removed plugin %s", uuid)
+            return
+        for problem in manifests.problems(plugin_manifest):
+            self.log_output("Plugin manifest problem (the phone app will refuse this): %s" % problem)
+        try:
+            script = z.open(plugin_manifest['script']).read().decode('utf-8')
+        except KeyError:
+            self.log_output("Plugin script '%s' is missing from the pbw; plugin not loaded."
+                            % plugin_manifest['script'])
+            self.plugins.unregister(uuid)
+            return
+        name = appinfo.get('longName') or appinfo.get('shortName') or str(uuid)
+        self.plugins.register(JsPlugin(uuid, name, plugin_manifest, script, self))
+        served = ['%s/%s' % (s['category'], item) for s in plugin_manifest['sources'] for item in s['items']]
+        self.logger.info("Loaded plugin %s (%s): sources %s, actions %s", name, uuid, served or 'none',
+                         [a['name'] for a in plugin_manifest['actions']] or 'none')
 
     def load_cached_pbws(self):
         cache_dir = self._pbw_cache_dir

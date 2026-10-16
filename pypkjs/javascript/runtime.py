@@ -72,6 +72,9 @@ class JSRuntime(object):
         self._event_aborted = self.context.get("_event_aborted")
         self.context.eval("var __js_identity = function(a, b) { return a === b; };")
         self._js_identity = self.context.get("__js_identity")
+        self.install_apis()
+
+    def install_apis(self):
         self.pjs = PebbleKitJS(self, self.qemu, persist=self.persist_dir)
         self.pjs.do_post_setup()
 

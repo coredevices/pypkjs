@@ -9,6 +9,27 @@ import dbm.dumb  # This is the only one that actually syncs data if the process 
 logger = logging.getLogger("pypkjs.javascript.localstorage")
 
 _storage_cache = {}  # This is used when filesystem-based storage is unavailable.
+# A plugin shares its pbw's store with the app's PKJS and may run alongside it; two dbm.dumb
+# handles on one file clobber each other's index, so open stores are shared and refcounted.
+_open_stores = {}  # path -> [store, refcount]
+
+
+def _open_store(path):
+    entry = _open_stores.get(path)
+    if entry is None:
+        entry = _open_stores[path] = [dbm.dumb.open(path, 'c'), 0]
+    entry[1] += 1
+    return entry[0]
+
+
+def _release_store(path):
+    entry = _open_stores.get(path)
+    if entry is None:
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        del _open_stores[path]
+        entry[0].close()
 
 
 def _to_str(value):
@@ -20,6 +41,7 @@ def _to_str(value):
 class LocalStorage(object):
     def __init__(self, runtime, persist_dir=None):
         self.storage = None
+        self._path = None
         if persist_dir is not None:
             try:
                 try:
@@ -28,7 +50,9 @@ class LocalStorage(object):
                     if e.errno != errno.EEXIST:
                         raise
 
-                self.storage = dbm.dumb.open(os.path.join(persist_dir, 'localstorage', str(runtime.pbw.uuid)), 'c')
+                path = os.path.join(persist_dir, 'localstorage', str(runtime.pbw.uuid))
+                self.storage = _open_store(path)
+                self._path = path
             except IOError:
                 pass
         if self.storage is None:
@@ -124,5 +148,8 @@ class LocalStorage(object):
         return len(self.storage.keys())
 
     def _shutdown(self):
-        if hasattr(self.storage, 'close'):
-            self.storage.close()
+        if self._path is not None:
+            path, self._path = self._path, None
+            # Flush the index now: other users of a shared store may keep it open.
+            self.storage.sync()
+            _release_store(path)

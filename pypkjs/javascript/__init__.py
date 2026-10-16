@@ -10,6 +10,7 @@ from .xhr import prepare_xhr, XHRExtension
 from .navigator import Navigator
 from .ws import prepare_ws, WSExtension
 from .events import EventExtension
+from .plugins import PluginsExtension
 
 
 class PebbleKitJS(object):
@@ -25,6 +26,7 @@ class PebbleKitJS(object):
             Navigator(runtime),
             Timers(runtime),
             self.pebble,
+            PluginsExtension(runtime),
             EventExtension(runtime),
             XHRExtension(runtime),
             WSExtension(runtime),

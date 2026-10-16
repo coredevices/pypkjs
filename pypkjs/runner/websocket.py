@@ -175,8 +175,9 @@ class WebsocketRunner(Runner):
                 f.write(message)
                 f.flush()
                 try:
-                    self.load_pbws([f.name], cache=True)
-                    AppInstaller(self.pebble.pebble, f.name, blobdb_client=self.pebble.blobdb).install()
+                    uuid = self.load_pbws([f.name], cache=True)[0]
+                    if not self.is_plugin_only(self.pbws[uuid]):
+                        AppInstaller(self.pebble.pebble, f.name, blobdb_client=self.pebble.blobdb).install()
                 except:
                     try:
                         ws.send(bytearray([0x05, 0x00, 0x00, 0x00, 0x01]))

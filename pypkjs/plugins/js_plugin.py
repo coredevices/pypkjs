@@ -1,0 +1,279 @@
+"""A third-party plugin: a pbw's plugin script, run the way the phone app runs it (JsPlugin.kt).
+
+Every request cold-starts a session (a fresh JS context holding the host shims and then the
+plugin's script), dispatches one request into it and tears it down.
+"""
+
+import json
+import logging
+import os
+import os.path
+
+import gevent
+import gevent.event
+import gevent.lock
+
+from . import PluginRetired, TIMEOUT, UNKNOWN, action_error
+from . import host_js
+from . import manifest as manifests
+from ..javascript.events import EventExtension
+from ..javascript.localstorage import LocalStorage
+from ..javascript.navigator import Navigator
+from ..javascript.performance import Performance
+from ..javascript.runtime import JSRuntime
+from ..javascript.timers import Timers
+from ..javascript.ws import WSExtension
+from ..javascript.xhr import XHRExtension
+
+logger = logging.getLogger('pypkjs.plugins')
+
+REQUEST_TIMEOUT = 20
+START_TIMEOUT = 10
+
+
+class JsPlugin(object):
+    builtin = False
+
+    def __init__(self, uuid, name, manifest, script, runner):
+        self.uuid = uuid
+        self.name = name
+        self.manifest = manifest
+        self.script = script
+        self.runner = runner
+        self.description = manifest['description']
+        self.sources = manifest['sources']
+        self.actions = manifest['actions']
+        self.retired = False
+        self._lock = gevent.lock.Semaphore()
+        self._refresh_waiters = []
+        self._secure_storage = SecureStorage(runner.persist_dir, uuid)
+
+    def source(self, category, item):
+        return next((s for s in self.sources if manifests.serves(s, category, item)), None)
+
+    def action(self, name):
+        return next((a for a in self.actions if a['name'] == name), None)
+
+    def retire(self):
+        self.retired = True
+        self.refresh(None)
+
+    def refresh(self, keys):
+        """Cut short the poll wait of subscriptions to these "<category>/<item>" keys (None: all)."""
+        for key, event in list(self._refresh_waiters):
+            if keys is None or key in keys:
+                event.set()
+
+    def observe(self, category, item, properties, icon_pixel_size, emit):
+        """Poll the source until killed, calling emit(envelope) with each good response."""
+        declaration = self.source(category, item)
+        if declaration is None:
+            return
+        key = '%s/%s' % (category, item)
+        request = {'kind': 'source', 'category': category, 'item': item}
+        if properties is not None:
+            request['properties'] = properties
+        if icon_pixel_size is not None:
+            request['iconPixelSize'] = icon_pixel_size
+        while True:
+            if self.retired:
+                raise PluginRetired('%s was updated or removed; subscribe again' % self.name)
+            envelope = self._parse_envelope(self.request(request))
+            if envelope is not None:
+                emit(envelope)
+            self._wait_for_refresh(key, max(1, declaration['suggestedRefreshIntervalSec']))
+
+    def invoke(self, action, args):
+        raw = self.request({'kind': 'action', 'action': action, 'args': args})
+        if raw is None:
+            return action_error(TIMEOUT, 'plugin did not respond')
+        try:
+            result = json.loads(raw)
+            ok = bool(result['ok'])
+        except (ValueError, TypeError, KeyError):
+            self.log('warn', 'bad action response: %s' % raw)
+            return action_error(UNKNOWN, 'malformed plugin response')
+        if ok:
+            self.refresh(result.get('refreshed') or [])
+        return {k: result.get(k) for k in ('ok', 'text', 'refreshed', 'code', 'message')}
+
+    def request(self, request):
+        """Cold-start a session, dispatch one request, tear the session down. None on failure."""
+        with self._lock:
+            if self.retired:
+                return None
+            session = PluginSession(self)
+            greenlet = gevent.spawn(session.run)
+            try:
+                if not session.started.wait(START_TIMEOUT):
+                    return None
+                response = session.dispatch(json.dumps(request), REQUEST_TIMEOUT)
+                if response is None:
+                    self.log('warn', '%s request got no response in %ds' % (request['kind'], REQUEST_TIMEOUT))
+                return response
+            finally:
+                session.stop()
+                greenlet.join(timeout=2)
+                greenlet.kill(block=False)
+
+    def log(self, level, message):
+        prefix = '' if level == 'info' else '%s: ' % level.upper()
+        self.runner.log_output('[%s] %s%s' % (self.name, prefix, message))
+
+    def _parse_envelope(self, raw):
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            self.log('warn', 'bad source response: %s' % raw)
+            return None
+        if not isinstance(parsed, dict):
+            self.log('warn', 'bad source response: %s' % raw)
+            return None
+        if parsed.get('error') is not None:
+            self.log('warn', 'source error: %s' % parsed['error'])
+            return None
+        envelope = {'pluginUuid': str(self.uuid), 'instances': parsed.get('instances') or []}
+        if parsed.get('validUntilMs') is not None:
+            envelope['validUntilMs'] = parsed['validUntilMs']
+        return envelope
+
+    def _wait_for_refresh(self, key, timeout):
+        waiter = (key, gevent.event.Event())
+        self._refresh_waiters.append(waiter)
+        try:
+            waiter[1].wait(timeout)
+        finally:
+            self._refresh_waiters.remove(waiter)
+
+
+class PluginSession(JSRuntime):
+    """One run of a plugin's script. All JS runs on the greenlet running run()."""
+
+    def __init__(self, plugin):
+        runner = plugin.runner
+        # LocalStorage keys its store off pbw.uuid: a plugin shares its pbw's store.
+        super(PluginSession, self).__init__(None, plugin, runner, persist_dir=runner.persist_dir,
+                                            block_private_addresses=runner.block_private_addresses)
+        self.plugin = plugin
+        self.started = gevent.event.AsyncResult()
+        self._pending = {}
+        self._next_id = 0
+        self.local_storage = None
+
+    def install_apis(self):
+        self.local_storage = LocalStorage(self, self.persist_dir)
+        for extension in (Performance, Navigator, Timers, EventExtension, XHRExtension, WSExtension):
+            extension(self)
+        self.context.expose('_JsBridge', self, ['respond', 'log', 'configMessage', 'refreshSources'])
+        self.context.expose(host_js.SECURE_STORAGE_BRIDGE, self.plugin._secure_storage.bridge(self), ['request'])
+        self.run_js('var Pebble = {};')
+        self.run_js(host_js.BASE64_JS)
+        self.run_js(host_js.FETCH_JS)
+        self.run_js(host_js.PLUGIN_HOST_JS)
+        if self.plugin.manifest['oauth']:
+            self.run_js(host_js.OAUTH_UNAVAILABLE_JS)
+        self.run_js(host_js.SECURE_STORAGE_JS)
+
+    def run(self, src=None):
+        try:
+            self.setup()
+            self.context.eval(self.plugin.script)
+        except Exception as e:
+            self.log('error', 'failed to start: %s' % getattr(e, 'stackTrace', e))
+            self.started.set(False)
+        else:
+            self.started.set(True)
+            self.event_loop()
+        finally:
+            if self.local_storage is not None:
+                self.local_storage._shutdown()
+            self.group.kill(timeout=2)
+
+    def dispatch(self, request_json, timeout):
+        self._next_id += 1
+        request_id = self._next_id
+        result = self._pending[request_id] = gevent.event.AsyncResult()
+        self.enqueue(self.context.eval, 'globalThis.__pluginDispatch(%d, %s)' % (request_id, request_json))
+        try:
+            return result.wait(timeout)
+        finally:
+            self._pending.pop(request_id, None)
+
+    def log_output(self, message):
+        self.plugin.log('info', message)
+
+    # _JsBridge
+
+    def respond(self, request_id, payload):
+        pending = self._pending.get(int(request_id))
+        if pending is not None:
+            pending.set(payload)
+
+    def log(self, level, message):
+        self.plugin.log(level, message)
+
+    def configMessage(self, message):
+        self.plugin.log('warn', 'sendConfigMessage: no config page is open')
+
+    def refreshSources(self, keys_json):
+        try:
+            keys = json.loads(keys_json)
+        except ValueError:
+            return
+        self.plugin.refresh([str(k) for k in keys])
+
+
+class SecureStorage(object):
+    """`Pebble.secureStorage`: a plugin's private key/value store (plain JSON on disk here)."""
+
+    def __init__(self, persist_dir, uuid):
+        self._path = None
+        self._values = {}
+        if persist_dir is not None:
+            directory = os.path.join(persist_dir, 'plugin-secure-storage')
+            os.makedirs(directory, exist_ok=True)
+            self._path = os.path.join(directory, '%s.json' % uuid)
+            try:
+                with open(self._path) as f:
+                    self._values = json.load(f)
+            except (IOError, ValueError):
+                pass
+
+    def bridge(self, session):
+        storage = self
+
+        class Bridge(object):
+            def request(self, request_id, request_json):
+                payload = storage._handle(request_json)
+                session.enqueue(session.context.eval, 'globalThis.%s(%d, %s)'
+                                % (host_js.SECURE_STORAGE_REPLY, int(request_id), json.dumps(payload)))
+
+        return Bridge()
+
+    def _handle(self, request_json):
+        try:
+            request = json.loads(request_json)
+            operation, key = request.get('operation'), request.get('key')
+            if not key:
+                raise ValueError('key is required')
+            if operation == 'getItem':
+                return {'result': self._values.get(key)}
+            if operation == 'setItem':
+                if not isinstance(request.get('value'), str):
+                    raise ValueError('value is required')
+                self._values[key] = request['value']
+            elif operation == 'removeItem':
+                self._values.pop(key, None)
+            else:
+                raise ValueError("unknown secure storage operation '%s'" % operation)
+            self._save()
+            return {'result': None}
+        except ValueError as e:
+            return {'error': {'code': 'INVALID_ARGS', 'message': str(e)}}
+
+    def _save(self):
+        if self._path is not None:
+            with open(self._path, 'w') as f:
+                json.dump(self._values, f)
