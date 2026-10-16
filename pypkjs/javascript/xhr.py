@@ -14,6 +14,7 @@ import requests.exceptions
 
 from .safe_requests import NonlocalHTTPAdapter
 from .qjs import from_js
+from ..version import __version__
 
 logger = logging.getLogger('pypkjs.javascript.xhr')
 
@@ -302,6 +303,8 @@ class XHRWorker(object):
 class XHRExtension:
     def __init__(self, runtime):
         session = requests.Session()
+        # Some APIs (Yahoo Finance, for one) refuse python-requests' default User-Agent.
+        session.headers['User-Agent'] = 'pypkjs/%s' % __version__
         if runtime.block_private_addresses:
             adapter = NonlocalHTTPAdapter()
             session.mount('http://', adapter)
