@@ -213,6 +213,7 @@ class XHRWorker(object):
 
         if self._is_timeline_api_request(method, url):
             return self._handle_timeline_api_request(method, url, body)
+        self.runtime.check_network(url)
 
         try:
             req = requests.Request(method, url, headers=headers, auth=auth,

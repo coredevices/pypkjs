@@ -58,9 +58,12 @@ Pebble.registerActionHandler(function (request, respond) {
 """
 
 
-def make_pbw(tmp_path, uuid, plugin, script, name='plugin.pbw', manifest_version=2, oauth=None):
+def make_pbw(tmp_path, uuid, plugin, script, name='plugin.pbw', manifest_version=2, oauth=None,
+             uses_permissions=None):
     appinfo = {'uuid': uuid, 'shortName': 'Demo', 'longName': 'Demo Plugin', 'manifestVersion': manifest_version,
                'plugin': dict(plugin, **({'oauth': oauth} if oauth else {}))}
+    if uses_permissions is not None:
+        appinfo['usesPermissions'] = uses_permissions
     path = str(tmp_path / name)
     with zipfile.ZipFile(path, 'w') as z:
         z.writestr('appinfo.json', json.dumps(appinfo))
@@ -252,9 +255,9 @@ def test_action_errors(demo, call, expected):
 # ---------------------------------------------------------------------------- plugin host
 
 
-def plugin_source_logs(tmp_path, script, secs=1.0, oauth=None, persist=None):
+def plugin_source_logs(tmp_path, script, secs=1.0, oauth=None, persist=None, uses_permissions=None):
     """Logs from subscribing to a demo/message source served by `script`."""
-    pbw = make_pbw(tmp_path, PLUGIN_UUID, DEMO_PLUGIN, script, oauth=oauth)
+    pbw = make_pbw(tmp_path, PLUGIN_UUID, DEMO_PLUGIN, script, oauth=oauth, uses_permissions=uses_permissions)
     return run_js("""
         Pebble.subscribeToSource({ category: 'demo', item: 'message',
             onData: function (e) { console.log('D', JSON.stringify(e)); } });
@@ -425,6 +428,29 @@ def test_fetch_network_failure_rejects_with_type_error(tmp_path):
     assert out == {'threw': 'TypeError: fetch failed: http://127.0.0.1:1/'}
 
 
+@pytest.mark.parametrize('uses_permissions, warned', [(None, True), (['LocalNetwork'], False)])
+def test_fetch_the_phone_would_refuse_is_made_and_warned_once(tmp_path, server, uses_permissions, warned):
+    pbw = make_pbw(tmp_path, PLUGIN_UUID, DEMO_PLUGIN, """
+        Pebble.registerSourceHandler(async function (request, respond) {
+          var a = await fetch('%(s)s/a');
+          var b = await fetch('%(s)s/b');
+          respond.data({ instances: [{ instanceId: a.status + ',' + b.status, properties: {} }] });
+        });
+    """ % {'s': server}, uses_permissions=uses_permissions)
+    # Two subscriptions, two requests: each runs in a session of its own.
+    logs = run_js("""
+        [1, 2].forEach(function () {
+            Pebble.subscribeToSource({ category: 'demo', item: 'message',
+                onData: function (e) { console.log('D', JSON.stringify(e)); } });
+        });
+    """, [pbw], secs=1.5)
+    assert [d['instances'][0]['instanceId'] for d in tagged(logs, 'D')] == ['200,200', '200,200']
+    warnings = [line for line in logs if 'WARN' in line]
+    assert warnings == (['[Demo Plugin] WARN: 127.0.0.1 is on the local network: the phone refuses requests to '
+                         'it without the LocalNetwork permission in usesPermissions'] if warned else [])
+
+
 def test_base64(tmp_path):
     out = fetch_results(tmp_path, "return [btoa('\\x00\\xffhi'), atob('AP9oaQ==') === '\\x00\\xffhi'];")
     assert out == ['AP9oaQ==', True]
+

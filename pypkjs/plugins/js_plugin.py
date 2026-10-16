@@ -41,6 +41,8 @@ class JsPlugin(Plugin):
         self.runner = runner
         self._lock = gevent.lock.Semaphore()
         self._secure_storage = SecureStorage(runner.persist_dir, uuid)
+        # Shared by its sessions (one per request), so each refusal is warned about once.
+        self.network_warnings = set()
         self._config_lock = gevent.lock.Semaphore()
         self._config_session = None
         self._config_greenlet = None
@@ -178,6 +180,7 @@ class PluginSession(JSRuntime):
         super(PluginSession, self).__init__(None, plugin, runner, persist_dir=runner.persist_dir,
                                             block_private_addresses=runner.block_private_addresses)
         self.plugin = plugin
+        self._network_warnings = plugin.network_warnings
         self.started = gevent.event.AsyncResult()
         self._pending = {}
         self._next_id = 0
@@ -231,6 +234,13 @@ class PluginSession(JSRuntime):
 
     def log_output(self, message):
         self.plugin.log('info', message)
+
+    def warn(self, message):
+        self.plugin.log('warn', message)
+
+    def appinfo(self):
+        pbw = next((p for u, p in self.runner.pbws.items() if str(u) == str(self.plugin.uuid)), None)
+        return pbw.manifest if pbw is not None else {}
 
     # _JsBridge
 

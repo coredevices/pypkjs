@@ -62,6 +62,10 @@ Apps can use the Core phone app's plugin API (`Pebble.subscribeToSource`,
   watch settings, watch state) serve fixture data. `watch/launch_app` and
   `launch_previous_app` really launch apps on the emulator.
 * Every permission a source or action asks of its caller is granted.
+* Requests are made as the phone app would make them, but not refused: a pbw with
+  `manifestVersion` 2 or later may only reach the domains it declares in `usesPermissions`
+  (`{"name": "Internet", "parameters": {"domains": [...]}}`, which also covers their subdomains)
+  and needs `LocalNetwork` for the LAN. A request the phone would refuse is logged as a warning.
 * `Pebble.oauth` calls fail with `AUTH_REQUIRED`.
 * Config pages are served with the phone app's page-side `Pebble` API
   (`Pebble.sendMessage('plugin' | 'pkjs', message)`, `ready` and `message` events), at

@@ -102,6 +102,7 @@ class WSConn(object):
             self.on_finished()
 
     def _run(self):
+        self.runtime.check_network(self.url)
         try:
             self.ws = websocket.create_connection(self.url, subprotocols=self.protocols)
         except (websocket.WebSocketException, OSError):
