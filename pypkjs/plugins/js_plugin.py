@@ -13,9 +13,9 @@ import gevent
 import gevent.event
 import gevent.lock
 
-from . import PluginRetired, TIMEOUT, UNKNOWN, action_error
+from . import TIMEOUT, UNKNOWN, action_error
 from . import host_js
-from . import manifest as manifests
+from .base import Plugin
 from ..javascript.events import EventExtension
 from ..javascript.localstorage import LocalStorage
 from ..javascript.navigator import Navigator
@@ -31,57 +31,22 @@ REQUEST_TIMEOUT = 20
 START_TIMEOUT = 10
 
 
-class JsPlugin(object):
-    builtin = False
-
+class JsPlugin(Plugin):
     def __init__(self, uuid, name, manifest, script, runner):
-        self.uuid = uuid
-        self.name = name
+        super(JsPlugin, self).__init__(uuid, name, manifest['description'], manifest['sources'], manifest['actions'])
         self.manifest = manifest
         self.script = script
         self.runner = runner
-        self.description = manifest['description']
-        self.sources = manifest['sources']
-        self.actions = manifest['actions']
-        self.retired = False
         self._lock = gevent.lock.Semaphore()
-        self._refresh_waiters = []
         self._secure_storage = SecureStorage(runner.persist_dir, uuid)
 
-    def source(self, category, item):
-        return next((s for s in self.sources if manifests.serves(s, category, item)), None)
-
-    def action(self, name):
-        return next((a for a in self.actions if a['name'] == name), None)
-
-    def retire(self):
-        self.retired = True
-        self.refresh(None)
-
-    def refresh(self, keys):
-        """Cut short the poll wait of subscriptions to these "<category>/<item>" keys (None: all)."""
-        for key, event in list(self._refresh_waiters):
-            if keys is None or key in keys:
-                event.set()
-
-    def observe(self, category, item, properties, icon_pixel_size, emit):
-        """Poll the source until killed, calling emit(envelope) with each good response."""
-        declaration = self.source(category, item)
-        if declaration is None:
-            return
-        key = '%s/%s' % (category, item)
+    def read(self, category, item, properties, icon_pixel_size):
         request = {'kind': 'source', 'category': category, 'item': item}
         if properties is not None:
             request['properties'] = properties
         if icon_pixel_size is not None:
             request['iconPixelSize'] = icon_pixel_size
-        while True:
-            if self.retired:
-                raise PluginRetired('%s was updated or removed; subscribe again' % self.name)
-            envelope = self._parse_envelope(self.request(request))
-            if envelope is not None:
-                emit(envelope)
-            self._wait_for_refresh(key, max(1, declaration['suggestedRefreshIntervalSec']))
+        return self._parse_envelope(self.request(request))
 
     def invoke(self, action, args):
         raw = self.request({'kind': 'action', 'action': action, 'args': args})
@@ -138,14 +103,6 @@ class JsPlugin(object):
         if parsed.get('validUntilMs') is not None:
             envelope['validUntilMs'] = parsed['validUntilMs']
         return envelope
-
-    def _wait_for_refresh(self, key, timeout):
-        waiter = (key, gevent.event.Event())
-        self._refresh_waiters.append(waiter)
-        try:
-            waiter[1].wait(timeout)
-        finally:
-            self._refresh_waiters.remove(waiter)
 
 
 class PluginSession(JSRuntime):

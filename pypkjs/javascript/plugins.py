@@ -17,7 +17,8 @@ logger = logging.getLogger('pypkjs.javascript.plugins')
 DEFAULT_ACTION_TIMEOUT_MS = 15000
 MAX_ACTION_TIMEOUT_MS = 60000
 
-# The plugin half of the phone app's startup.js, with its `_Pebble` bridge renamed `__plugins`.
+# The plugin half of the phone app's startup.js, with its `_Pebble` bridge renamed `__plugins`,
+# and the config-page push that apps beside it call.
 _PLUGINS_JS = r'''(function (global) {
     const sourceSubscriptions = new Map();
     let sourceSubscriptionIdCounter = 0;
@@ -130,6 +131,8 @@ _PLUGINS_JS = r'''(function (global) {
     global.Pebble.subscribeToSource = PluginAPI.subscribeToSource;
     global.Pebble.enumeratePlugins = PluginAPI.enumeratePlugins;
     global.Pebble.invokeAction = PluginAPI.invokeAction;
+    // Config pages can't hold a message channel here; the app drops these too while none is open.
+    global.Pebble.sendConfigMessage = function (message) {};
 })(this);
 '''
 

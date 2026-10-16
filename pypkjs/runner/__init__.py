@@ -16,6 +16,7 @@ import shutil
 import urllib.parse
 import urllib.request, urllib.parse, urllib.error
 
+from libpebble2.protocol.apps import AppRunState, AppRunStateStart
 from libpebble2.util.bundle import PebbleBundle
 from libpebble2.services.appmessage import AppMessageService
 import pypkjs.javascript as javascript
@@ -24,6 +25,7 @@ from .pebble_manager import PebbleManager
 from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
 from pypkjs.plugins import manifest as manifests
+from pypkjs.plugins.builtin import FixtureStore, builtin_plugins
 from pypkjs.plugins.js_plugin import JsPlugin
 from pypkjs.plugins.registry import PluginRegistry
 
@@ -36,7 +38,8 @@ class Runner(object):
         """A pbw carrying a plugin and nothing to install on the watch."""
         return not pbw.prefixes and manifests.loadable_plugin(pbw.manifest) is not None
 
-    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False):
+    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False,
+                 plugin_fixtures=None):
         self.qemu = qemu
         self.pebble = PebbleManager(qemu)
         self.persist_dir = persist_dir
@@ -50,12 +53,20 @@ class Runner(object):
         self.pbws = {}
         self.logger = logging.getLogger("pypkjs")
         self.running_uuid = None
+        self.running_app_uuid = None
+        self.previous_app_uuid = None
         self.js = None
         self.js_greenlet = None
         self.urls = URLManager()
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
         self.plugins = PluginRegistry()
+        self.plugin_fixtures = FixtureStore(plugin_fixtures, self.log_output)
+        for plugin in builtin_plugins(self.plugin_fixtures, self):
+            self.plugins.register(plugin)
+        self.plugin_fixtures.load_file()
+        if plugin_fixtures is not None:
+            gevent.spawn(self.plugin_fixtures.watch_file)
         self.load_cached_pbws()
         self.load_pbws(pbws)
 
@@ -119,6 +130,8 @@ class Runner(object):
 
     def handle_start(self, uuid):
         self.logger.info("Starting %s", uuid)
+        if uuid != self.running_app_uuid:
+            self.previous_app_uuid, self.running_app_uuid = self.running_app_uuid, uuid
         if uuid in self.pbws:
             self.logger.info("starting js for %s", uuid)
             self.start_js(self.pbws[uuid])
@@ -138,6 +151,15 @@ class Runner(object):
         self.js.log_output = lambda m: self.log_output(m)
         self.js.open_config_page = lambda url, callback: self.open_config_page(url, callback)
         self.js_greenlet = gevent.spawn(self.js.run, pbw.src)
+
+    def launch_app(self, app_uuid):
+        self.pebble.pebble.send_packet(AppRunState(data=AppRunStateStart(uuid=app_uuid)))
+
+    def app_title(self, app_uuid):
+        pbw = self.pbws.get(app_uuid)
+        if pbw is None:
+            return str(app_uuid)
+        return pbw.manifest.get('longName') or pbw.manifest.get('shortName') or str(app_uuid)
 
     def timeline_mapping_for_app(self, app_uuid):
         try:

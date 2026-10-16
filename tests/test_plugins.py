@@ -123,7 +123,9 @@ def test_manifest_problems_match_the_phone_apps_rules():
 
 
 def test_enumerate_plugins_omits_defaults_like_the_app(demo):
-    logs = run_js("console.log('P', JSON.stringify(Pebble.enumeratePlugins()));", [demo], secs=0.3)
+    logs = run_js("""
+        console.log('P', JSON.stringify(Pebble.enumeratePlugins().filter(function (p) { return p.uuid === '%s'; })));
+    """ % PLUGIN_UUID, [demo], secs=0.3)
     assert tagged(logs, 'P') == [[{
         'uuid': PLUGIN_UUID,
         'name': 'Demo Plugin',
