@@ -138,6 +138,41 @@ class Runner(object):
         except KeyError:
             self.log_output("Config page '%s' is missing from the pbw." % page)
 
+    def plugin_list(self):
+        """Every registered plugin, for `pebble plugins list`."""
+        listed = []
+        for plugin in self.plugins.all():
+            pbw = self.pbws.get(UUID(str(plugin.uuid))) if not plugin.builtin else None
+            listed.append({
+                'uuid': str(plugin.uuid),
+                'name': plugin.name,
+                'kind': 'builtin' if plugin.builtin else 'plugin' if pbw is None or self.is_plugin_only(pbw) else 'app',
+                'sources': ['%s/%s' % (s['category'], item) for s in plugin.sources for item in s['items']],
+                'actions': [a['name'] for a in plugin.actions],
+            })
+        return listed
+
+    def remove_plugin(self, uuid):
+        """Unregister a plugin-only pbw and drop it from the app cache; returns the plugin's name."""
+        plugin = self.plugins.find_plugin(uuid)
+        if plugin is None:
+            raise ValueError("no plugin %s is installed" % uuid)
+        if plugin.builtin:
+            raise ValueError("%s is built into the phone app" % plugin.name)
+        pbw_uuid = UUID(str(plugin.uuid))
+        pbw = self.pbws.get(pbw_uuid)
+        if pbw is not None and not self.is_plugin_only(pbw):
+            raise ValueError("%s comes with a watchapp; install a build without its plugin instead" % plugin.name)
+        self.plugins.unregister(plugin.uuid)
+        self.pbws.pop(pbw_uuid, None)
+        self.config_page_files.pop(str(pbw_uuid), None)
+        if self._pbw_cache_dir is not None:
+            cached = os.path.join(self._pbw_cache_dir, '%s.pbw' % pbw_uuid)
+            if os.path.exists(cached):
+                os.remove(cached)
+        self.logger.info("Removed plugin %s (%s)", plugin.name, pbw_uuid)
+        return plugin.name
+
     def load_cached_pbws(self):
         cache_dir = self._pbw_cache_dir
         if cache_dir is not None:

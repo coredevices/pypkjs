@@ -98,9 +98,16 @@ different glyphs.
       ]
     }
 
-A source can also be changed live over the phone websocket: send `0x0d 0x01` followed by
-`{"source": "<category>/<item>", "instances": [...]}` (or `"instances": null` to restore
-the default). The reply is `0x0d 0x00` on success, `0x0d 0x01` on failure.
+Plugins can also be managed over the phone websocket (`pebble plugins` uses this). Each command
+is `0x0d` followed by a command byte; the reply is `0x0d 0x00` (followed by a JSON result for
+commands that have one) on success, and `0x0d 0x01` followed by an error message on failure.
+
+* `0x01` + `{"source": "<category>/<item>", "instances": [...]}`: change a built-in source's
+  readings live (`"instances": null` restores the default).
+* `0x02`: list every registered plugin: `[{"uuid", "name", "kind", "sources", "actions"}]`, where
+  `kind` is `builtin`, `plugin` (a pbw with only a plugin) or `app` (a watchapp's plugin).
+* `0x03` + uuid: remove a plugin-only pbw, including from the app cache it's reloaded from at
+  startup. A watchapp's plugin goes with the app, so it can't be removed this way.
 
 Platforms
 -------

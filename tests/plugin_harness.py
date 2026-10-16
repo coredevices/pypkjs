@@ -8,7 +8,7 @@ stdin: JSON {"src": str, "secs": float, "pbws": [path], "persist": str|null,
              "ws_commands": [[delay, payload]]}
 
 The fixtures file is watched for changes; each ws_commands payload (a string) is sent as a
-websocket 0x0d command after `delay` seconds, and the reply logged as "WS <byte>".
+websocket 0x0d command after `delay` seconds, and the reply logged as "WS <byte> [<payload>]".
 stdout (last line): JSON list of log lines. AppMessages the app sends are logged as
 "APPMSG <json>"; app launches as "LAUNCH <uuid>".
 """
@@ -38,6 +38,10 @@ class HarnessRunner(object):
     _load_plugin = Runner._load_plugin
     _load_config_page = Runner._load_config_page
     app_title = Runner.app_title
+    is_plugin_only = staticmethod(Runner.is_plugin_only)
+    plugin_list = Runner.plugin_list
+    remove_plugin = Runner.remove_plugin
+    _pbw_cache_dir = Runner._pbw_cache_dir
 
     def __init__(self, persist_dir, fixtures):
         self.persist_dir = persist_dir
@@ -75,7 +79,8 @@ class HarnessRunner(object):
             uuid = UUID(appinfo['uuid'])
             self._load_plugin(z, uuid, appinfo)
             self._load_config_page(z, uuid, appinfo)
-            self.pbws[uuid] = Runner.PBW(uuid, None, appinfo, {}, [])
+            prefixes = [name[:-len('manifest.json')] for name in z.namelist() if name.endswith('manifest.json')]
+            self.pbws[uuid] = Runner.PBW(uuid, None, appinfo, {}, prefixes)
 
 
 class HarnessWebsocket(object):
@@ -85,7 +90,8 @@ class HarnessWebsocket(object):
         self.runner = runner
 
     def send(self, message):
-        self.runner.log_output('WS %d' % message[1])
+        reply = bytes(message[2:]).decode('utf-8')
+        self.runner.log_output('WS %d' % message[1] + (' ' + reply if reply else ''))
 
 
 def send_plugin_command(runner, delay, payload):

@@ -69,8 +69,9 @@ def make_pbw(tmp_path, uuid, plugin, script, name='plugin.pbw', manifest_version
     return path
 
 
-def run_js(src, pbws, secs=1.0, persist=None, app_uuid=None):
-    config = {'src': src, 'pbws': pbws, 'secs': secs, 'persist': persist, 'app_uuid': app_uuid}
+def run_js(src, pbws, secs=1.0, persist=None, app_uuid=None, ws_commands=()):
+    config = {'src': src, 'pbws': pbws, 'secs': secs, 'persist': persist, 'app_uuid': app_uuid,
+              'ws_commands': list(ws_commands)}
     proc = subprocess.run([sys.executable, HARNESS], input=json.dumps(config),
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, "harness exited %d\n%s" % (proc.returncode, proc.stderr)
@@ -137,6 +138,47 @@ def test_enumerate_plugins_omits_defaults_like_the_app(demo):
                      'targets': ['demo/message/text']},
                     {'name': 'hang'}],
     }]]
+
+
+
+def ws_replies(logs):
+    return [(line[3], json.loads(line[5:]) if line[3] == '0' and len(line) > 4 else line[5:])
+            for line in logs if line.startswith('WS ')]
+
+
+def test_websocket_lists_and_removes_plugins(tmp_path, demo):
+    persist = tmp_path / 'persist'
+    (persist / 'app_cache').mkdir(parents=True)
+    cached = persist / 'app_cache' / ('%s.pbw' % PLUGIN_UUID)
+    cached.write_bytes(open(demo, 'rb').read())
+    app = make_pbw(tmp_path, OTHER_UUID, DEMO_PLUGIN, DEMO_SCRIPT, name='app.pbw')
+    with zipfile.ZipFile(app, 'a') as z:
+        z.writestr('basalt/manifest.json', '{}')
+    logs = run_js("""
+        setTimeout(function () {
+            console.log('after: ' + Pebble.enumeratePlugins().map(function (p) { return p.uuid; }).join(','));
+        }, 800);
+    """, [demo, app], secs=1.2, persist=str(persist), ws_commands=[
+        [0.2, '\x02'],
+        [0.4, '\x03' + PLUGIN_UUID],
+        [0.5, '\x03' + PLUGIN_UUID],
+        [0.6, '\x03' + OTHER_UUID],
+        [0.7, '\x03' + '00000000-0000-0000-0001-000000000001'],
+    ])
+    (status, listed), removed, gone, app_plugin, builtin = ws_replies(logs)
+    assert status == '0'
+    by_uuid = {p['uuid']: p for p in listed}
+    assert by_uuid[PLUGIN_UUID] == {'uuid': PLUGIN_UUID, 'name': 'Demo Plugin', 'kind': 'plugin',
+                                    'sources': ['demo/message'], 'actions': ['set_text', 'hang']}
+    assert by_uuid[OTHER_UUID]['kind'] == 'app'
+    assert by_uuid['00000000-0000-0000-0001-000000000001']['kind'] == 'builtin'
+    assert removed == ('0', {'removed': 'Demo Plugin'})
+    assert gone == ('1', 'no plugin %s is installed' % PLUGIN_UUID)
+    assert app_plugin == ('1', 'Demo Plugin comes with a watchapp; install a build without its plugin instead')
+    assert builtin[0] == '1' and builtin[1].endswith('is built into the phone app')
+    assert not cached.exists()
+    after = next(line for line in logs if line.startswith('after: ')).split(': ')[1].split(',')
+    assert PLUGIN_UUID not in after and OTHER_UUID in after
 
 
 def test_subscribe_delivers_envelopes(demo):

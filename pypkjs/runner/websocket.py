@@ -252,19 +252,31 @@ class WebsocketRunner(Runner):
 
     @must_auth
     def do_plugin_command(self, ws, message):
-        """0x01 + JSON {"source": "<category>/<item>", "instances": [...] or null}: replace a built-in
-        source's readings (null restores its default). Replies 0x0d 0x00 on success, 0x0d 0x01 on failure."""
+        """Replies 0x0d 0x00 (+ JSON, if the command has a result) on success, and 0x0d 0x01 + an error
+        message on failure.
+
+        0x01 + JSON {"source": "<category>/<item>", "instances": [...] or null}: replace a built-in
+             source's readings (null restores its default).
+        0x02: list the registered plugins.
+        0x03 + uuid: remove a plugin-only pbw, from the app cache too."""
         command = message[0]
         try:
-            if command != 0x01:
+            body = bytes(message[1:]).decode('utf-8')
+            if command == 0x01:
+                request = json.loads(body)
+                self.plugin_fixtures.set(request['source'], request.get('instances'))
+                result = None
+            elif command == 0x02:
+                result = self.plugin_list()
+            elif command == 0x03:
+                result = {'removed': self.remove_plugin(body.strip())}
+            else:
                 raise ValueError("unknown plugin command %d" % command)
-            request = json.loads(bytes(message[1:]).decode('utf-8'))
-            self.plugin_fixtures.set(request['source'], request.get('instances'))
         except (ValueError, KeyError, TypeError) as e:
-            self.log_output("Plugin fixture update failed: %s" % e)
-            ws.send(bytearray([0x0d, 0x01]))
+            self.log_output("Plugin command failed: %s" % e)
+            ws.send(bytearray([0x0d, 0x01]) + str(e).encode('utf-8'))
         else:
-            ws.send(bytearray([0x0d, 0x00]))
+            ws.send(bytearray([0x0d, 0x00]) + (json.dumps(result).encode('utf-8') if result is not None else b''))
 
 
 class WebsocketLogHandler(logging.Handler):

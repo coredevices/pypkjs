@@ -243,4 +243,5 @@ def test_websocket_command_sets_and_resets_a_source():
         [0.9, '\x01{nope'],
     ])
     assert battery_levels(logs) == ['87%', '12%', '87%']
-    assert [line for line in logs if line.startswith('WS ')] == ['WS 0', 'WS 0', 'WS 1']
+    replies = [line for line in logs if line.startswith('WS ')]
+    assert replies[:2] == ['WS 0', 'WS 0'] and replies[2].startswith('WS 1 Expecting property name')
