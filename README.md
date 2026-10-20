@@ -66,7 +66,11 @@ Apps can use the Core phone app's plugin API (`Pebble.subscribeToSource`,
   `manifestVersion` 2 or later may only reach the domains it declares in `usesPermissions`
   (`{"name": "Internet", "parameters": {"domains": [...]}}`, which also covers their subdomains)
   and needs `LocalNetwork` for the LAN. A request the phone would refuse is logged as a warning.
-* `Pebble.oauth` calls fail with `AUTH_REQUIRED`.
+* `Pebble.oauth.authorize` / `refresh` go through the appstore's OAuth broker as the
+  `pebble login` user (pebble-tool passes its credentials in `PYPKJS_FIREBASE_CREDENTIALS`;
+  `PYPKJS_APPSTORE_API_BASE` overrides the broker). Sign-in opens your browser and comes back to
+  a one-shot server on 127.0.0.1. Signed out, the calls fail with `AUTH_REQUIRED`. The plugin's
+  connector must be set up on the appstore (`pebble oauth-connector set`).
 * Config pages are served with the phone app's page-side `Pebble` API
   (`Pebble.sendMessage('plugin' | 'pkjs', message)`, `ready` and `message` events), at
   `http://localhost:<port>/config/<uuid>/`. That covers a pbw's `configPage` (which, as on

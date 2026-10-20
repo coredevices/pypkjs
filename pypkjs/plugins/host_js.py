@@ -332,14 +332,17 @@ SECURE_STORAGE_JS = r'''(function (global) {
 })(this);
 ''' % promise_bridge_js(SECURE_STORAGE_BRIDGE, SECURE_STORAGE_REPLY, 'secure storage operation failed')
 
-# Hosted OAuth goes through Core's broker, which the emulator can't reach. Plugins that declare a
-# connector get calls that fail the way a signed-out phone does.
-OAUTH_UNAVAILABLE_JS = r'''(function (global) {
-  function unavailable() {
-    var error = new Error('OAuth sign-in is not available in the emulator');
-    error.code = 'AUTH_REQUIRED';
-    return Promise.reject(error);
-  }
-  Pebble.oauth = Object.freeze({ authorize: unavailable, refresh: unavailable });
+# Hosted OAuth: the same API as the app's, served by hosted_oauth.py through Core's broker.
+OAUTH_BRIDGE = '_PluginOAuthBridge'
+OAUTH_REPLY = '__pluginOAuthReply'
+
+OAUTH_JS = r'''(function (global) {
+%s
+  Pebble.oauth = Object.freeze({
+    authorize: function (slug) { return call('authorize', { slug: String(slug) }); },
+    refresh: function (slug, brokerRefresh) {
+      return call('refresh', { slug: String(slug), brokerRefresh: String(brokerRefresh || '') });
+    }
+  });
 })(this);
-'''
+''' % promise_bridge_js(OAUTH_BRIDGE, OAUTH_REPLY, 'OAuth operation failed')

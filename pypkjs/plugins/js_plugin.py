@@ -15,6 +15,7 @@ import gevent.lock
 
 from . import TIMEOUT, UNKNOWN, action_error
 from . import host_js
+from . import hosted_oauth
 from .base import Plugin
 from ..javascript.events import EventExtension
 from ..javascript.localstorage import LocalStorage
@@ -197,7 +198,8 @@ class PluginSession(JSRuntime):
         self.run_js(host_js.FETCH_JS)
         self.run_js(host_js.PLUGIN_HOST_JS)
         if self.plugin.manifest['oauth']:
-            self.run_js(host_js.OAUTH_UNAVAILABLE_JS)
+            self.context.expose(host_js.OAUTH_BRIDGE, OAuthBridge(self), ['request'])
+            self.run_js(host_js.OAUTH_JS)
         self.run_js(host_js.SECURE_STORAGE_JS)
 
     def run(self, src=None):
@@ -261,6 +263,41 @@ class PluginSession(JSRuntime):
         except ValueError:
             return
         self.plugin.refresh([str(k) for k in keys])
+
+
+class OAuthBridge(object):
+    """`Pebble.oauth` requests: each runs in its own greenlet (a sign-in waits on the browser), in the
+    session's group so tearing the session down cancels it and closes its loopback listener."""
+
+    def __init__(self, session):
+        self.session = session
+
+    def request(self, request_id, request_json):
+        self.session.group.spawn(self._run, int(request_id), request_json)
+
+    def _run(self, request_id, request_json):
+        plugin = self.session.plugin
+        try:
+            request = json.loads(request_json)
+            slug = request.get('slug')
+            if slug not in plugin.manifest['oauth']:
+                raise hosted_oauth.OAuthError("'%s' isn't an OAuth connector this plugin declares" % slug,
+                                              'INVALID_ARGS')
+            if request.get('operation') == 'authorize':
+                result = hosted_oauth.authorize(plugin.uuid, slug, log=lambda m: plugin.log('info', m))
+            elif request.get('operation') == 'refresh':
+                result = hosted_oauth.refresh(request.get('brokerRefresh'))
+            else:
+                raise hosted_oauth.OAuthError('unknown OAuth operation', 'INVALID_ARGS')
+            payload = {'result': result}
+        except hosted_oauth.OAuthError as e:
+            plugin.log('warn', 'OAuth: %s' % e)
+            payload = {'error': {'code': e.code, 'message': str(e)}}
+        except Exception as e:
+            logger.exception('OAuth request failed')
+            payload = {'error': {'code': 'AUTH_REQUIRED', 'message': str(e)}}
+        self.session.enqueue(self.session.context.eval, 'globalThis.%s(%d, %s)'
+                             % (host_js.OAUTH_REPLY, request_id, json.dumps(payload)))
 
 
 class SecureStorage(object):
