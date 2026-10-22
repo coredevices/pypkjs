@@ -48,27 +48,35 @@ class EventSourceMixin(object):
         run on any greenlet, and touching the JS engine from one while another is
         suspended mid-call (e.g. in a sync XHR) can crash QuickJS."""
         def go():
-            event = self.__runtime.build_event(event_type or event_name, data)
-            for listener in list(self.__listeners.get(event_name, [])):
-                try:
-                    self.__runtime.call_js(listener, event)
-                except (JSError, JSRuntimeException) as e:
-                    self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
-                except Exception as e:
-                    self.__runtime.log_output(str(e))
-                    raise
-                finally:
-                    if self.__runtime.event_aborted(event):
-                        break
-            # An on<event> handler property, if the subclass exposes one.
-            dom_event = getattr(self, "on" + event_name, None)
-            if dom_event is not None:
-                try:
-                    self.__runtime.call_js(dom_event, event)
-                except (JSError, JSRuntimeException) as e:
-                    self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
-                except Exception as e:
-                    self.__runtime.log_output(str(e))
-                    raise
+            self.dispatch_event(event_name, self.__runtime.build_event(event_type or event_name, data))
 
         self.__runtime.enqueue(go)
+
+    def dispatch_event(self, event_name, event):
+        """Run event_name's listeners and on<event_name> handler with a JS event, on the event
+        loop greenlet. True if there was a listener and none of them threw."""
+        listeners = list(self.__listeners.get(event_name, []))
+        delivered = bool(listeners)
+        for listener in listeners:
+            try:
+                self.__runtime.call_js(listener, event)
+            except (JSError, JSRuntimeException) as e:
+                self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
+                delivered = False
+            except Exception as e:
+                self.__runtime.log_output(str(e))
+                raise
+            finally:
+                if self.__runtime.event_aborted(event):
+                    break
+        # An on<event> handler property, if the subclass exposes one.
+        dom_event = getattr(self, "on" + event_name, None)
+        if dom_event is not None:
+            try:
+                self.__runtime.call_js(dom_event, event)
+            except (JSError, JSRuntimeException) as e:
+                self.__runtime.log_output(getattr(e, 'stackTrace', str(e)))
+            except Exception as e:
+                self.__runtime.log_output(str(e))
+                raise
+        return delivered

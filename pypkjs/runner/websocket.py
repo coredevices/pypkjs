@@ -49,7 +49,7 @@ class Websocket(object):
 
 class WebsocketRunner(Runner):
     def __init__(self, qemu, pbws, port, token=None, ssl_root=None, persist_dir=None, oauth_token=None,
-                 layout_file=None, block_private_addresses=False):
+                 layout_file=None, block_private_addresses=False, plugin_fixtures=None):
         self.port = port
         self.token = token
         self.requires_auth = (token is not None)
@@ -59,7 +59,8 @@ class WebsocketRunner(Runner):
         self.ssl_root = ssl_root
         self.config_callback = None
         super(WebsocketRunner, self).__init__(qemu, pbws, persist_dir=persist_dir, oauth_token=oauth_token,
-                                              layout_file=layout_file, block_private_addresses=block_private_addresses)
+                                              layout_file=layout_file, block_private_addresses=block_private_addresses,
+                                              plugin_fixtures=plugin_fixtures)
 
     def run(self):
         pebble_greenlet = self.pebble.connect()
@@ -87,7 +88,16 @@ class WebsocketRunner(Runner):
     def log_output(self, message):
         self.broadcast(b'\x02' + message.encode('utf-8'))
 
+    def config_page_url(self, uuid):
+        if uuid is None or not self.config_pages.has_page(uuid):
+            return None
+        return 'http://localhost:%d%s' % (self.port, self.config_pages.path_for(uuid))
+
     def open_config_page(self, url, callback):
+        if url.startswith('data:') and self.running_uuid is not None:
+            # Served from here, so the page gets the Pebble.sendMessage bridge.
+            self.config_pages.open_data_page(self.running_uuid, url)
+            url = self.config_page_url(self.running_uuid)
         self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url.encode('utf-8')), url.encode('utf-8')))
         self.config_callback = callback
 
@@ -98,6 +108,8 @@ class WebsocketRunner(Runner):
         self.broadcast(b'\x00' + message)
 
     def handle_ws(self, environ, start_response):
+        if environ['PATH_INFO'].startswith('/config/'):
+            return self.config_pages.handle(environ, start_response)
         if environ['PATH_INFO'] == '/':
             ws = Websocket(environ['wsgi.websocket'])
             self.websockets.append(ws)
@@ -108,6 +120,9 @@ class WebsocketRunner(Runner):
                 except WebSocketError:
                     break
             self.on_close(ws)
+            return []
+        start_response('404 Not Found', [('Content-Type', 'text/plain')])
+        return [b'Not found.']
 
     def on_open(self, ws, *args, **kwargs):
         ws.authed = not self.requires_auth
@@ -142,6 +157,8 @@ class WebsocketRunner(Runner):
             0x0a: self.do_config_ws,
             0x0b: self.do_qemu_command,
             0x0c: self.do_timeline_command,
+            0x0d: self.do_plugin_command,
+            0x0e: self.do_location_command,
         }
 
         if opcode in opcode_handlers:
@@ -175,8 +192,9 @@ class WebsocketRunner(Runner):
                 f.write(message)
                 f.flush()
                 try:
-                    self.load_pbws([f.name], cache=True)
-                    AppInstaller(self.pebble.pebble, f.name, blobdb_client=self.pebble.blobdb).install()
+                    uuid = self.load_pbws([f.name], cache=True)[0]
+                    if not self.is_plugin_only(self.pbws[uuid]):
+                        AppInstaller(self.pebble.pebble, f.name, blobdb_client=self.pebble.blobdb).install()
                 except:
                     try:
                         ws.send(bytearray([0x05, 0x00, 0x00, 0x00, 0x01]))
@@ -233,6 +251,46 @@ class WebsocketRunner(Runner):
             ws.send(bytearray([0x0c, 0x01]))
 
 
+    @must_auth
+    def do_plugin_command(self, ws, message):
+        """Replies 0x0d 0x00 (+ JSON, if the command has a result) on success, and 0x0d 0x01 + an error
+        message on failure.
+
+        0x01 + JSON {"source": "<category>/<item>", "instances": [...] or null}: replace a built-in
+             source's readings (null restores its default).
+        0x02: list the registered plugins.
+        0x03 + uuid: remove a plugin-only pbw, from the app cache too."""
+        command = message[0]
+        try:
+            body = bytes(message[1:]).decode('utf-8')
+            if command == 0x01:
+                request = json.loads(body)
+                self.plugin_fixtures.set(request['source'], request.get('instances'))
+                result = None
+            elif command == 0x02:
+                result = self.plugin_list()
+            elif command == 0x03:
+                result = {'removed': self.remove_plugin(body.strip())}
+            else:
+                raise ValueError("unknown plugin command %d" % command)
+        except (ValueError, KeyError, TypeError) as e:
+            self.log_output("Plugin command failed: %s" % e)
+            ws.send(bytearray([0x0d, 0x01]) + str(e).encode('utf-8'))
+        else:
+            ws.send(bytearray([0x0d, 0x00]) + (json.dumps(result).encode('utf-8') if result is not None else b''))
+
+    @must_auth
+    def do_location_command(self, ws, message):
+        """JSON {"latitude": float, "longitude": float}, or null to go back to an IP lookup: where
+        geolocation puts the phone. Replies 0x0e 0x00, or 0x0e 0x01 + an error message."""
+        try:
+            self.set_location(json.loads(bytes(message).decode('utf-8')))
+        except (ValueError, KeyError, TypeError) as e:
+            ws.send(bytearray([0x0e, 0x01]) + str(e).encode('utf-8'))
+        else:
+            ws.send(bytearray([0x0e, 0x00]))
+
+
 class WebsocketLogHandler(logging.Handler):
     def __init__(self, ws_runner, *args, **kwargs):
         self.ws_runner = ws_runner
@@ -260,6 +318,9 @@ def run_tool():
     parser.add_argument('--layout', default=None, help="Path to a firmware layout.json file on disk.")
     parser.add_argument('--debug', action='store_true', help="Very, very verbose debug spew.")
     parser.add_argument('--block-private-addresses', action='store_true', help="Disable access to private IPs.")
+    parser.add_argument('--plugin-fixtures', default=os.environ.get('PYPKJS_PLUGIN_FIXTURES'),
+                        help="JSON file of readings for the built-in plugins, reloaded when it changes "
+                             "(default: $PYPKJS_PLUGIN_FIXTURES).")
     parser.add_argument('pbws', nargs='*', help="Set of pbws.")
     args = parser.parse_args(sys.argv[1:])
     logging.basicConfig()
@@ -269,7 +330,8 @@ def run_tool():
         logging.getLogger().setLevel(logging.INFO)
     runner = WebsocketRunner(args.qemu,args.pbws, args.port, token=args.token, ssl_root=args.ssl_root,
                              persist_dir=args.persist, oauth_token=args.oauth, layout_file=args.layout,
-                             block_private_addresses=args.block_private_addresses)
+                             block_private_addresses=args.block_private_addresses,
+                             plugin_fixtures=args.plugin_fixtures)
     runner.run()
     # The quickjs-ng extension deadlocks against gevent's hub during interpreter
     # shutdown (see pypkjs/javascript/qjs.py), so shut the JS runtime down

@@ -31,7 +31,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(0.5)
         length = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(length).decode('utf-8')
-        out = json.dumps({'path': self.path, 'body': body}).encode('utf-8')
+        out = json.dumps({'path': self.path, 'body': body,
+                          'ua': self.headers.get('User-Agent')}).encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('X-Foo', 'bar')
@@ -158,6 +159,22 @@ def test_xhr(server):
     assert sorted(logs[1:]) == ['async 200 bar {"city":"Zürich ☃"}', 'json /json']
 
 
+def test_xhr_user_agent(server):
+    logs = run_js("""
+        function ua(header) {
+            var x = new XMLHttpRequest();
+            x.open('GET', '%(s)s/ua', false);
+            if (header) x.setRequestHeader('User-Agent', header);
+            x.send();
+            console.log(JSON.parse(x.responseText).ua);
+        }
+        ua();
+        ua('weather-face/1.0');
+    """ % {'s': server})
+    assert logs[0].startswith('pypkjs/')
+    assert logs[1] == 'weather-face/1.0'
+
+
 def test_glance_callback_during_sync_xhr(server):
     """The blobdb callback fires on another greenlet while JS is blocked in a sync
     XHR. Running the JS callback there instead of on the event loop segfaults."""
@@ -171,3 +188,16 @@ def test_glance_callback_during_sync_xhr(server):
         console.log('sync done', s.status);
     """ % server, secs=1.5, glance_delay=0.1)
     assert logs == ['sync done 200', 'glance ok true']
+
+
+def test_long_built_strings_reach_python():
+    # quickjs-ng keeps long concatenations as ropes, which the binding couldn't convert.
+    logs = run_js("""
+        try {
+            Pebble.insertTimelinePin('{"id": "' + 'x'.repeat(2000) + '"}');
+            console.log('ok');
+        } catch (e) {
+            console.log(String(e));
+        }
+    """)
+    assert logs == ['ok']

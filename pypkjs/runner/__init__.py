@@ -16,19 +16,31 @@ import shutil
 import urllib.parse
 import urllib.request, urllib.parse, urllib.error
 
+from libpebble2.protocol.apps import AppRunState, AppRunStateStart
 from libpebble2.util.bundle import PebbleBundle
 from libpebble2.services.appmessage import AppMessageService
 import pypkjs.javascript as javascript
 import pypkjs.javascript.runtime
+from .config_pages import ConfigPages
 from .pebble_manager import PebbleManager
 from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
+from pypkjs.plugins import manifest as manifests
+from pypkjs.plugins.builtin import FixtureStore, builtin_plugins
+from pypkjs.plugins.js_plugin import JsPlugin
+from pypkjs.plugins.registry import PluginRegistry
 
 
 class Runner(object):
     PBW = collections.namedtuple('PBW', ('uuid', 'src', 'manifest', 'layouts', 'prefixes'))
 
-    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False):
+    @staticmethod
+    def is_plugin_only(pbw):
+        """A pbw carrying a plugin and nothing to install on the watch."""
+        return not pbw.prefixes and manifests.loadable_plugin(pbw.manifest) is not None
+
+    def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False,
+                 plugin_fixtures=None):
         self.qemu = qemu
         self.pebble = PebbleManager(qemu)
         self.persist_dir = persist_dir
@@ -42,15 +54,29 @@ class Runner(object):
         self.pbws = {}
         self.logger = logging.getLogger("pypkjs")
         self.running_uuid = None
+        self.running_app_uuid = None
+        self.previous_app_uuid = None
         self.js = None
         self.js_greenlet = None
         self.urls = URLManager()
         self.timeline = PebbleTimeline(self, persist=persist_dir, oauth=oauth_token, layout_file=layout_file)
         self.block_private_addresses = block_private_addresses
+        self.location = self._load_location()
+        self.plugins = PluginRegistry()
+        self.config_pages = ConfigPages(self)
+        # Config pages shipped in a pbw (appinfo configPage that isn't a URL), by uuid.
+        self.config_page_files = {}
+        self.plugin_fixtures = FixtureStore(plugin_fixtures, self.log_output)
+        for plugin in builtin_plugins(self.plugin_fixtures, self):
+            self.plugins.register(plugin)
+        self.plugin_fixtures.load_file()
+        if plugin_fixtures is not None:
+            gevent.spawn(self.plugin_fixtures.watch_file)
         self.load_cached_pbws()
         self.load_pbws(pbws)
 
     def load_pbws(self, pbws, start=False, cache=False):
+        loaded = []
         for pbw_path in pbws:
             with zipfile.ZipFile(pbw_path) as z:
                 appinfo = z.open('appinfo.json').read()
@@ -69,14 +95,115 @@ class Runner(object):
                         layouts[platform] = json.load(z.open('%s/layouts.json' % platform))
                     except (KeyError, ValueError):
                         layouts[platform] = {}
-            manifest = json.loads(appinfo)
-            uuid = UUID(manifest['uuid'])
+                manifest = json.loads(appinfo)
+                uuid = UUID(manifest['uuid'])
+                self._load_plugin(z, uuid, manifest)
+                self._load_config_page(z, uuid, manifest)
             if cache and self._pbw_cache_dir is not None:
                 shutil.copy(pbw_path, os.path.join(self._pbw_cache_dir, '%s.pbw' % uuid))
             self.pbws[uuid] = self.PBW(uuid, src, manifest, layouts, prefixes)
+            loaded.append(uuid)
             if start:
                 self.start_js(self.pbws[uuid])
         self.logger.info("Ready. Loaded apps: %s", ', '.join(map(str, list(self.pbws.keys()))))
+        return loaded
+
+    def _load_plugin(self, z, uuid, appinfo):
+        plugin_manifest = manifests.loadable_plugin(appinfo)
+        if plugin_manifest is None:
+            if self.plugins.unregister(uuid) is not None:
+                self.logger.info("Removed plugin %s", uuid)
+            return
+        for problem in manifests.problems(plugin_manifest):
+            self.log_output("Plugin manifest problem (the phone app will refuse this): %s" % problem)
+        try:
+            script = z.open(plugin_manifest['script']).read().decode('utf-8')
+        except KeyError:
+            self.log_output("Plugin script '%s' is missing from the pbw; plugin not loaded."
+                            % plugin_manifest['script'])
+            self.plugins.unregister(uuid)
+            return
+        name = appinfo.get('longName') or appinfo.get('shortName') or str(uuid)
+        self.plugins.register(JsPlugin(uuid, name, plugin_manifest, script, self))
+        served = ['%s/%s' % (s['category'], item) for s in plugin_manifest['sources'] for item in s['items']]
+        self.logger.info("Loaded plugin %s (%s): sources %s, actions %s", name, uuid, served or 'none',
+                         [a['name'] for a in plugin_manifest['actions']] or 'none')
+
+    def _load_config_page(self, z, uuid, appinfo):
+        page = appinfo.get('configPage')
+        self.config_page_files.pop(str(uuid), None)
+        if not isinstance(page, str) or page.startswith(('http://', 'https://')):
+            return
+        try:
+            self.config_page_files[str(uuid)] = z.open(page).read().decode('utf-8')
+        except KeyError:
+            self.log_output("Config page '%s' is missing from the pbw." % page)
+
+    def plugin_list(self):
+        """Every registered plugin, for `pebble plugins list`."""
+        listed = []
+        for plugin in self.plugins.all():
+            pbw = self.pbws.get(UUID(str(plugin.uuid))) if not plugin.builtin else None
+            listed.append({
+                'uuid': str(plugin.uuid),
+                'name': plugin.name,
+                'kind': 'builtin' if plugin.builtin else 'plugin' if pbw is None or self.is_plugin_only(pbw) else 'app',
+                'sources': ['%s/%s' % (s['category'], item) for s in plugin.sources for item in s['items']],
+                'actions': [a['name'] for a in plugin.actions],
+            })
+        return listed
+
+    def remove_plugin(self, uuid):
+        """Unregister a plugin-only pbw and drop it from the app cache; returns the plugin's name."""
+        plugin = self.plugins.find_plugin(uuid)
+        if plugin is None:
+            raise ValueError("no plugin %s is installed" % uuid)
+        if plugin.builtin:
+            raise ValueError("%s is built into the phone app" % plugin.name)
+        pbw_uuid = UUID(str(plugin.uuid))
+        pbw = self.pbws.get(pbw_uuid)
+        if pbw is not None and not self.is_plugin_only(pbw):
+            raise ValueError("%s comes with a watchapp; install a build without its plugin instead" % plugin.name)
+        self.plugins.unregister(plugin.uuid)
+        self.pbws.pop(pbw_uuid, None)
+        self.config_page_files.pop(str(pbw_uuid), None)
+        if self._pbw_cache_dir is not None:
+            cached = os.path.join(self._pbw_cache_dir, '%s.pbw' % pbw_uuid)
+            if os.path.exists(cached):
+                os.remove(cached)
+        self.logger.info("Removed plugin %s (%s)", plugin.name, pbw_uuid)
+        return plugin.name
+
+    @property
+    def _location_file(self):
+        return os.path.join(self.persist_dir, 'location.json') if self.persist_dir is not None else None
+
+    def _load_location(self):
+        try:
+            with open(self._location_file) as f:
+                return self._checked_location(json.load(f))
+        except (TypeError, OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _checked_location(location):
+        latitude, longitude = float(location['latitude']), float(location['longitude'])
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValueError("%s, %s is not a place on Earth" % (latitude, longitude))
+        return {'latitude': latitude, 'longitude': longitude}
+
+    def set_location(self, location):
+        """Where geolocation puts the phone from now on, kept across restarts; None goes back to
+        looking it up from this machine's IP address."""
+        self.location = self._checked_location(location) if location is not None else None
+        if self._location_file is None:
+            return
+        if self.location is None:
+            if os.path.exists(self._location_file):
+                os.remove(self._location_file)
+        else:
+            with open(self._location_file, 'w') as f:
+                json.dump(self.location, f)
 
     def load_cached_pbws(self):
         cache_dir = self._pbw_cache_dir
@@ -85,6 +212,8 @@ class Runner(object):
 
     def handle_start(self, uuid):
         self.logger.info("Starting %s", uuid)
+        if uuid != self.running_app_uuid:
+            self.previous_app_uuid, self.running_app_uuid = self.running_app_uuid, uuid
         if uuid in self.pbws:
             self.logger.info("starting js for %s", uuid)
             self.start_js(self.pbws[uuid])
@@ -104,6 +233,15 @@ class Runner(object):
         self.js.log_output = lambda m: self.log_output(m)
         self.js.open_config_page = lambda url, callback: self.open_config_page(url, callback)
         self.js_greenlet = gevent.spawn(self.js.run, pbw.src)
+
+    def launch_app(self, app_uuid):
+        self.pebble.pebble.send_packet(AppRunState(data=AppRunStateStart(uuid=app_uuid)))
+
+    def app_title(self, app_uuid):
+        pbw = self.pbws.get(app_uuid)
+        if pbw is None:
+            return str(app_uuid)
+        return pbw.manifest.get('longName') or pbw.manifest.get('shortName') or str(app_uuid)
 
     def timeline_mapping_for_app(self, app_uuid):
         try:
@@ -142,7 +280,16 @@ class Runner(object):
         if self.js is None:
             self.log_output("No JS found, can't show configuration.")
             return
-        self.js.do_config()
+        # As in the phone app, a pbw's own config page wins over its JS's showConfiguration.
+        url = self.config_page_url(self.running_uuid)
+        if url is not None and self.pbws[self.running_uuid].manifest.get('configPage'):
+            self.open_config_page(url, self.js.pjs.pebble._handle_config_response)
+        else:
+            self.js.do_config()
+
+    def config_page_url(self, uuid):
+        """Where a pbw's config page is served with its Pebble.sendMessage bridge, if anywhere."""
+        return None
 
     def log_output(self, message):
         raise NotImplemented

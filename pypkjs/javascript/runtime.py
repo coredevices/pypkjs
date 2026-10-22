@@ -12,6 +12,7 @@ import quickjs
 from . import PebbleKitJS
 from .exceptions import JSRuntimeException
 from .qjs import JSContext, JSError
+from ..plugins import network
 
 logger = logging.getLogger('pypkjs.javascript.pebble')
 
@@ -26,6 +27,7 @@ class JSRuntime(object):
         self.runtime_id = JSRuntime.runtimeCount
         self.persist_dir = persist_dir
         self.block_private_addresses = block_private_addresses
+        self._network_warnings = set()
         JSRuntime.runtimeCount += 1
 
     def setup(self):
@@ -72,6 +74,9 @@ class JSRuntime(object):
         self._event_aborted = self.context.get("_event_aborted")
         self.context.eval("var __js_identity = function(a, b) { return a === b; };")
         self._js_identity = self.context.get("__js_identity")
+        self.install_apis()
+
+    def install_apis(self):
         self.pjs = PebbleKitJS(self, self.qemu, persist=self.persist_dir)
         self.pjs.do_post_setup()
 
@@ -147,6 +152,19 @@ class JSRuntime(object):
 
     def log_output(self, message):
         raise NotImplemented
+
+    def warn(self, message):
+        self.log_output('WARN: %s' % message)
+
+    def appinfo(self):
+        return self.pbw.manifest
+
+    def check_network(self, url):
+        """Warn, once for each reason, about a request the phone app would refuse."""
+        reason = network.refusal(url, self.appinfo())
+        if reason is not None and reason not in self._network_warnings:
+            self._network_warnings.add(reason)
+            self.warn(reason)
 
     def ext_name(self, name):
         return "instance/%d/runtime/%s" % (self.runtime_id, name)
