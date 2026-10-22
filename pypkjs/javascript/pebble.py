@@ -112,7 +112,6 @@ class Pebble(events.EventSourceMixin):
                 value = list(v)
             else:
                 raise JSRuntimeException("?????")
-            d[str(k)] = value
             if k in app_keys:
                 d[str(app_keys[k])] = value
         self.triggerEvent("appmessage", "AppMessage", {"payload": d})
