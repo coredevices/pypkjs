@@ -66,6 +66,7 @@ class Runner(object):
         self.plugins = PluginRegistry()
         self.config_pages = ConfigPages(self)
         self.microphone = Microphone(self)
+        self.microphone.attach()
         # Config pages shipped in a pbw (appinfo configPage that isn't a URL), by uuid.
         self.config_page_files = {}
         self.plugin_fixtures = FixtureStore(plugin_fixtures, self.log_output)
@@ -267,7 +268,6 @@ class Runner(object):
     def run(self):
         self.logger.info('Connecting to pebble')
         greenlet = self.pebble.connect()
-        self.microphone.attach()
         # continuous_sync() deliberately NOT enabled -- the remote server is dead.
         self.timeline.do_maintenance()
         greenlet.join()

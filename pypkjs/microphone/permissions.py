@@ -115,9 +115,13 @@ class MicrophonePermissions(object):
         return metadata + struct.pack('<I', APP_PERMISSION_MICROPHONE if self.granted(uuid) else 0)
 
     def blobdb_for_install(self, blobdb):
-        """A BlobDB client for libpebble2's AppInstaller that sends the app's entry with its grant
-        and remembers the entry, so the grant is in place before the app first runs and can be
-        changed later without reinstalling it."""
+        """A BlobDB client for libpebble2's AppInstaller that gives the app its grant before it
+        first runs, and remembers the app's entry so the grant can change later without a
+        reinstall.
+
+        The extended entry goes first, then the installer's own: on its own, an extended entry
+        that only changes the grant would be a permission-only update, and the watch would keep
+        running its old copy of the app."""
         permissions = self
 
         class InstallBlobDB(object):
@@ -134,12 +138,15 @@ class MicrophonePermissions(object):
                     return blobdb.insert(database, key, value, callback)
                 granted = permissions.granted(uuid)
 
-                def installed(status):
-                    if status == BlobStatus.Success:
-                        entry['synced'] = granted
+                def granted_then_install(status):
+                    if status != BlobStatus.Success:
+                        permissions._save()
+                        return callback(status)
+                    entry['synced'] = granted
                     permissions._save()
-                    callback(status)
-                return blobdb.insert(database, key, permissions._extend(uuid, bytes(value)), installed)
+                    blobdb.insert(database, key, value, callback)
+                return blobdb.insert(database, key, permissions._extend(uuid, bytes(value)),
+                                     granted_then_install)
 
             def __getattr__(self, name):
                 return getattr(blobdb, name)

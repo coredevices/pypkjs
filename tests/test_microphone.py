@@ -97,22 +97,25 @@ def test_revoking_ends_the_stream_and_updates_the_watch():
     result = stream(seconds=1, revoke_after=0.5, install=True, capabilities=APP_PERMISSIONS)
     assert result['sent'] == [SUCCESS, STOP]
     assert any('lost the microphone' in l for l in result['logs'])
-    install, update = result['blobdb']
-    assert install[2][-8:] == '01000000'
+    grant, install, update = result['blobdb']
+    assert grant[2][-8:] == '01000000'
     # Only the grant changes, so the watch doesn't take it as a reinstall.
-    assert update[2] == install[2][:-8] + '00000000'
+    assert update[2] == grant[2][:-8] + '00000000'
 
 
-def test_install_carries_the_grant():
-    [(db, key, value)] = stream(install=True, capabilities=APP_PERMISSIONS)['blobdb']
-    assert db == 2 and key == 'aaaaaaaabbbbccccddddeeeeeeeeeeee'
-    assert len(value) == 130 * 2 and value.endswith('01000000')
+def test_install_grants_before_installing():
+    grant, install = stream(install=True, capabilities=APP_PERMISSIONS)['blobdb']
+    assert grant[0] == install[0] == 2 and grant[1] == install[1] == 'aaaaaaaabbbbccccddddeeeeeeeeeeee'
+    assert len(grant[2]) == 130 * 2 and grant[2].endswith('01000000')
+    # Then the installer's own entry, which the watch always takes as a (re)install: after a
+    # grant-only update alone, it would keep running the old build.
+    assert install[2] == grant[2][:-8]
 
 
 def test_install_denies_an_undeclared_app():
-    [(_, _, value)] = stream(install=True, capabilities=APP_PERMISSIONS,
-                             manifest={'usesPermissions': []})['blobdb']
-    assert len(value) == 130 * 2 and value.endswith('00000000')
+    grant, _ = stream(install=True, capabilities=APP_PERMISSIONS,
+                      manifest={'usesPermissions': []})['blobdb']
+    assert len(grant[2]) == 130 * 2 and grant[2].endswith('00000000')
 
 
 def test_install_on_firmware_without_app_permissions_is_legacy():

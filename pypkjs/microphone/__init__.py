@@ -49,7 +49,7 @@ class Microphone(object):
         self._warned = set()
 
     def attach(self):
-        """Start answering the watch, once connected."""
+        """Start answering the watch."""
         pebble = self.runner.pebble.pebble
         pebble.register_endpoint(VoiceControl, self._handle_voice_control)
         pebble.register_endpoint(AudioStream, self._handle_audio)
