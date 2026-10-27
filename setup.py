@@ -1,10 +1,25 @@
 __author__ = 'katharine'
 
-from setuptools import setup, find_packages
+import glob
+import os
+
+from setuptools import Extension, setup, find_packages
 
 __version__= None  # Overwritten by executing version.py.
 with open('pypkjs/version.py') as f:
     exec(f.read())
+
+# Decodes watch microphone audio: libspeex's codec, from the third_party/speex/speex submodule,
+# without its tests or the FFT and psychoacoustic code only the preprocessor and VBR use.
+SPEEX_UNUSED = ('testenc', 'fftwrap', 'kiss_fft', 'smallft', 'vorbis_psy')
+speex = Extension(
+    'pypkjs.microphone._speex',
+    sources=['pypkjs/microphone/_speex.c'] + sorted(
+        path for path in glob.glob('third_party/speex/speex/libspeex/*.c')
+        if not os.path.basename(path).startswith(SPEEX_UNUSED)),
+    include_dirs=['third_party/speex', 'third_party/speex/speex/include'],
+    define_macros=[('HAVE_CONFIG_H', '1')],
+)
 
 setup(name='pypkjs',
       version=__version__,
@@ -14,6 +29,7 @@ setup(name='pypkjs',
       author_email='griffin@griffinli.com',
       license='MIT',
       packages=find_packages(),
+      ext_modules=[speex],
       install_requires=[
           'gevent>=24.11.1',
           'gevent-websocket>=0.10.1',
