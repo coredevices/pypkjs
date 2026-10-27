@@ -23,6 +23,7 @@ import pypkjs.javascript as javascript
 import pypkjs.javascript.runtime
 from .config_pages import ConfigPages
 from .pebble_manager import PebbleManager
+from pypkjs.microphone import Microphone
 from pypkjs.timeline import PebbleTimeline
 from pypkjs.timeline.urls import URLManager
 from pypkjs.plugins import manifest as manifests
@@ -64,6 +65,7 @@ class Runner(object):
         self.location = self._load_location()
         self.plugins = PluginRegistry()
         self.config_pages = ConfigPages(self)
+        self.microphone = Microphone(self)
         # Config pages shipped in a pbw (appinfo configPage that isn't a URL), by uuid.
         self.config_page_files = {}
         self.plugin_fixtures = FixtureStore(plugin_fixtures, self.log_output)
@@ -254,6 +256,7 @@ class Runner(object):
         """Stop the running JS app. With wait (seconds), block until its runtime has
         shut down (localStorage flushed, handlers unregistered)."""
         if self.js is not None:
+            self.microphone.js_stopping(self.running_uuid)
             self.js.stop()
             self.js = None
             self.running_uuid = None
@@ -264,6 +267,7 @@ class Runner(object):
     def run(self):
         self.logger.info('Connecting to pebble')
         greenlet = self.pebble.connect()
+        self.microphone.attach()
         # continuous_sync() deliberately NOT enabled -- the remote server is dead.
         self.timeline.do_maintenance()
         greenlet.join()

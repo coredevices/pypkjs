@@ -17,11 +17,13 @@ import struct
 import sys
 import tempfile
 import traceback
+from uuid import UUID
 
 from libpebble2.communication.transports.qemu import MessageTargetQemu
 from libpebble2.services.install import AppInstaller
 
 from . import Runner
+from ..microphone.permissions import DENY, GRANT, WATCH_MICROPHONE
 from ..version import __version__
 
 
@@ -159,6 +161,7 @@ class WebsocketRunner(Runner):
             0x0c: self.do_timeline_command,
             0x0d: self.do_plugin_command,
             0x0e: self.do_location_command,
+            0x0f: self.do_permission_command,
         }
 
         if opcode in opcode_handlers:
@@ -194,7 +197,9 @@ class WebsocketRunner(Runner):
                 try:
                     uuid = self.load_pbws([f.name], cache=True)[0]
                     if not self.is_plugin_only(self.pbws[uuid]):
-                        AppInstaller(self.pebble.pebble, f.name, blobdb_client=self.pebble.blobdb).install()
+                        AppInstaller(self.pebble.pebble, f.name,
+                                     blobdb_client=self.microphone.permissions.blobdb_for_install(
+                                         self.pebble.blobdb)).install()
                 except:
                     try:
                         ws.send(bytearray([0x05, 0x00, 0x00, 0x00, 0x01]))
@@ -289,6 +294,39 @@ class WebsocketRunner(Runner):
             ws.send(bytearray([0x0e, 0x01]) + str(e).encode('utf-8'))
         else:
             ws.send(bytearray([0x0e, 0x00]))
+
+
+    @must_auth
+    def do_permission_command(self, ws, message):
+        """JSON {"permission": "WatchMicrophone", "uuid": optional, defaulting to the running app,
+        "state": "grant", "deny", "reset" or absent to only ask}: what the app may use, as a user's
+        answer in the phone app. Replies 0x0f 0x00 + JSON {"uuid", "name", "granted", "reason"},
+        or 0x0f 0x01 + an error message."""
+        try:
+            request = json.loads(bytes(message).decode('utf-8'))
+            if request.get('permission') != WATCH_MICROPHONE:
+                raise ValueError("unknown permission %r; pypkjs knows %s" % (request.get('permission'),
+                                                                         WATCH_MICROPHONE))
+            uuid = request.get('uuid')
+            if uuid is not None:
+                uuid = UUID(uuid)
+            elif self.running_app_uuid is not None:
+                uuid = self.running_app_uuid
+            else:
+                raise ValueError("no app is running; name one with --uuid")
+            state = request.get('state')
+            permissions = self.microphone.permissions
+            if state is None:
+                granted, reason = permissions.decision(uuid)
+            elif state in (GRANT, DENY, 'reset'):
+                granted, reason = permissions.set_override(uuid, None if state == 'reset' else state)
+            else:
+                raise ValueError("unknown state %r" % state)
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            ws.send(bytearray([0x0f, 0x01]) + str(e).encode('utf-8'))
+        else:
+            result = {'uuid': str(uuid), 'name': self.app_title(uuid), 'granted': granted, 'reason': reason}
+            ws.send(bytearray([0x0f, 0x00]) + json.dumps(result).encode('utf-8'))
 
 
 class WebsocketLogHandler(logging.Handler):

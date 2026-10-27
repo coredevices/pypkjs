@@ -44,6 +44,8 @@ class Pebble(events.EventSourceMixin):
              'timelineUnsubscribe', 'timelineSubscriptions', 'getActiveWatchInfo', 'appGlanceReload',
              'insertTimelinePin', 'deleteTimelinePin'])
         runtime.run_js("Pebble.platform = 'pypkjs';")
+        runtime.run_js("var __pypkjs_set_event_buffer = function(e, bytes) { e.data = new Uint8Array(bytes).buffer; };")
+        self._set_event_buffer = runtime.context.get("__pypkjs_set_event_buffer")
         self.blobdb = pebble.blobdb
         self.pebble = pebble.pebble
         self.runtime = runtime
@@ -117,6 +119,15 @@ class Pebble(events.EventSourceMixin):
             else:
                 d[str(k)] = value
         self.triggerEvent("appmessage", "AppMessage", {"payload": d})
+
+    def _audio_event(self, name, props, data=None):
+        """Fire a watch microphone event, with data (bytes) as an ArrayBuffer."""
+        def go():
+            event = self.runtime.build_event(name, props)
+            if data is not None:
+                self.runtime.call_js(self._set_event_buffer, event, list(data))
+            self.dispatch_event(name, event)
+        self.runtime.enqueue(go)
 
     def _check_ready(self):
         if not self.is_ready:
