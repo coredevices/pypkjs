@@ -5,3 +5,5 @@ pypkjs.egg-info
 build
 dist
 .vscode
+*.so
+*.pyd

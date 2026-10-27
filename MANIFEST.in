@@ -1,1 +1,7 @@
 include requirements.txt
+
+include third_party/speex/config.h third_party/speex/speex_config_types.h third_party/speex/README.md
+include third_party/speex/speex/COPYING
+recursive-include third_party/speex/speex/libspeex *.c *.h
+recursive-include third_party/speex/speex/include/speex *.h
+include pypkjs/microphone/_speex.c
