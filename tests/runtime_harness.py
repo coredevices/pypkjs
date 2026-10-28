@@ -4,7 +4,8 @@ Invoked as a subprocess by test_runtime.py: importing pypkjs monkey-patches the
 whole interpreter for gevent, and the quickjs-ng extension deadlocks at
 interpreter shutdown, so this must not run inside the pytest process.
 
-stdin: JSON {"src": str, "secs": float, "persist": str|null, "glance_delay": float|null}
+stdin: JSON {"src": str, "secs": float, "persist": str|null, "glance_delay": float|null,
+       "webview_response": str|null (closes a config page with it, as bytes)}
 stdout (last line): JSON list of log lines.
 """
 import json
@@ -49,6 +50,10 @@ def main():
 
     rt = HarnessRuntime(qemu, pbw, mock.MagicMock(), persist_dir=config.get('persist'))
     greenlet = gevent.spawn(rt.run, config['src'])
+    if config.get('webview_response') is not None:
+        # As the websocket runner gets it from pebble-tool: raw bytes.
+        gevent.sleep(0.2)
+        rt.pjs.pebble._handle_config_response(config['webview_response'].encode('utf-8'))
     gevent.sleep(config.get('secs', 0.5))
     rt.stop()
     greenlet.join(5)

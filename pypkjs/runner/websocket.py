@@ -100,7 +100,8 @@ class WebsocketRunner(Runner):
             # Served from here, so the page gets the Pebble.sendMessage bridge.
             self.config_pages.open_data_page(self.running_uuid, url)
             url = self.config_page_url(self.running_uuid)
-        self.broadcast(struct.pack('>BBI%ds' % len(url), 0x0a, 0x01, len(url.encode('utf-8')), url.encode('utf-8')))
+        encoded = url.encode('utf-8')
+        self.broadcast(struct.pack('>BBI%ds' % len(encoded), 0x0a, 0x01, len(encoded), encoded))
         self.config_callback = callback
 
     def _handle_outbound(self, message):
@@ -223,7 +224,7 @@ class WebsocketRunner(Runner):
         if message[0] == 0x02:
             length, = struct.unpack_from(">I", message, 1)
             result, = struct.unpack_from(">%ds" % length, message, 5)
-            self.config_callback(result)
+            self.config_callback(result.decode('utf-8', 'replace'))
             self.config_callback = None
         elif message[0] == 0x03:
             self.config_callback("")

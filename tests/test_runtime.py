@@ -17,8 +17,9 @@ import pytest
 HARNESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runtime_harness.py')
 
 
-def run_js(src, secs=0.5, persist=None, glance_delay=None):
-    config = {'src': src, 'secs': secs, 'persist': persist, 'glance_delay': glance_delay}
+def run_js(src, secs=0.5, persist=None, glance_delay=None, webview_response=None):
+    config = {'src': src, 'secs': secs, 'persist': persist, 'glance_delay': glance_delay,
+              'webview_response': webview_response}
     proc = subprocess.run([sys.executable, HARNESS], input=json.dumps(config),
                           capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, "harness exited %d\n%s" % (proc.returncode, proc.stderr)
@@ -201,3 +202,14 @@ def test_long_built_strings_reach_python():
         }
     """)
     assert logs == ['ok']
+
+
+def test_config_page_response_reaches_webviewclosed():
+    # pebble-tool hands the response over as bytes; it must still reach JS as a string.
+    response = '{"color":"#ff0000","name":"Ünïcode"}'
+    logs = run_js("""
+        Pebble.addEventListener('webviewclosed', function(e) {
+            console.log(typeof e.response + ' ' + JSON.parse(e.response).name);
+        });
+    """, secs=1, webview_response=response)
+    assert logs == ['string \u00dcn\u00efcode']

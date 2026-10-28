@@ -330,6 +330,9 @@ class Pebble(events.EventSourceMixin):
         return js_object
 
     def _handle_config_response(self, response):
+        # Event data crosses into JS as JSON, which has no bytes.
+        if isinstance(response, (bytes, bytearray)):
+            response = bytes(response).decode('utf-8', 'replace')
         self.triggerEvent("webviewclosed", "WebviewClosed", {"response": response})
 
     def appGlanceReload(self, slices, success, failure):
