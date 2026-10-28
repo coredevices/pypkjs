@@ -20,7 +20,7 @@ import traceback
 from uuid import UUID
 
 from libpebble2.communication.transports.qemu import MessageTargetQemu
-from libpebble2.services.install import AppInstaller
+from libpebble2.services.install import AppInstaller, AppInstallError
 
 from . import Runner
 from ..microphone.permissions import DENY, GRANT, WATCH_MICROPHONE
@@ -201,12 +201,15 @@ class WebsocketRunner(Runner):
                         AppInstaller(self.pebble.pebble, f.name,
                                      blobdb_client=self.microphone.permissions.blobdb_for_install(
                                          self.pebble.blobdb)).install()
-                except:
+                except Exception as e:
+                    # The install status has no room for a reason: log it where pebble-tool shows logs.
+                    self.log_output("App install failed: %s" % (e or type(e).__name__))
                     try:
                         ws.send(bytearray([0x05, 0x00, 0x00, 0x00, 0x01]))
                     except WebSocketError:
                         pass
-                    raise
+                    if not isinstance(e, AppInstallError):
+                        raise
                 else:
                     try:
                         ws.send(bytearray([0x05, 0x00, 0x00, 0x00, 0x00]))
