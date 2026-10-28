@@ -41,7 +41,7 @@ jobs:
   wheels:
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +52,9 @@ jobs:
         uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
-          CIBW_SKIP: "*-win32 *-musllinux_i686 *-manylinux_i686"
+          CIBW_SKIP: "*-musllinux_i686 *-manylinux_i686"
+          # Intel wheels are cross-compiled on the arm64 runner: GitHub retired macos-13.
+          CIBW_ARCHS_MACOS: "arm64 x86_64"
 
       - uses: actions/upload-artifact@v4
         with:
