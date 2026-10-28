@@ -147,6 +147,12 @@ class JSRuntime(object):
                 except (JSError, JSRuntimeException, quickjs.JSException) as e:
                     self.log_output("Error running asynchronous JavaScript:")
                     self.log_output(getattr(e, 'stackTrace', str(e)))
+                except gevent.GreenletExit:
+                    raise
+                except Exception as e:
+                    # pypkjs' own failure: say so where the developer looks, and keep the app running.
+                    logger.exception("Internal error running %s", getattr(fn, '__name__', fn))
+                    self.log_output("pypkjs internal error, please report it: %s: %s" % (type(e).__name__, e))
         except gevent.hub.LoopExit:
             logger.warning("Runtime ran out of events; terminating.")
 
