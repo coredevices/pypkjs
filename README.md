@@ -59,8 +59,9 @@ Apps can use the Core phone app's plugin API (`Pebble.subscribeToSource`,
   registered, not installed on the watch. Plugin logs show up with the app's, prefixed
   with the plugin's name.
 * The phone app's built-in plugins (weather, phone state, calendar, music, notifications,
-  watch settings, watch state) serve fixture data. `watch/launch_app` and
-  `launch_previous_app` really launch apps on the emulator.
+  watch settings, watch state, preferences) serve fixture data. `watch/launch_app` and
+  `launch_previous_app` really launch apps on the emulator. `preferences/complications`
+  starts as the app's defaults; set it to choose the readings a face or dashboard shows.
 * Every permission a source or action asks of its caller is granted.
 * Requests are made as the phone app would make them, but not refused: a pbw with
   `manifestVersion` 2 or later may only reach the domains it declares in `usesPermissions`

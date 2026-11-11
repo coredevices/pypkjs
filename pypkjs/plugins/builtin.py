@@ -1,5 +1,5 @@
 """The phone app's built-in plugins (weather, phone state, calendar, music, notifications, watch
-settings, watch state), serving fixture data instead of the phone's.
+settings, watch state, preferences), serving fixture data instead of the phone's.
 
 Declarations match the app's. Readings come from a FixtureStore: defaults below, overridden per
 source by a fixtures file or the websocket, and changed by the plugins' own actions.
@@ -210,15 +210,35 @@ def calendar_event(index, name, starts, ends, calendar, location=None, all_day=F
     return {'instanceId': str(index), 'properties': properties}
 
 
+# ------------------------------------------------------------------------------- preferences
+
+PALO_ALTO_ID = '5d6b7a2e-3c41-4b6e-9a3f-1f0c2b7d8e90'
+LONDON_ID = '0c9e4f1a-7b2d-4e8a-b6c3-9d1e2f3a4b5c'
+
+
+def complication(position, category, item, index, prop):
+    """A reading the user wants in complication slot `position`: instance `index` of category/item."""
+    return {'instanceId': str(position), 'properties': {
+        'category': short(category), 'item': short(item),
+        'index': {'numericValue': numeric(index)}, 'property': short(prop)}}
+
+
+def saved_location(instance_id, name, latitude, longitude):
+    return {'instanceId': instance_id, 'properties': {
+        'name': short(name),
+        'latitude': {'numericValue': numeric(latitude)}, 'longitude': {'numericValue': numeric(longitude)},
+        'current': {'boolean': {'value': False}}}}
+
+
 def default_fixtures(now=None):
     now = now or datetime.datetime.now().astimezone()
     hour = now.replace(minute=0, second=0, microsecond=0)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     return {
         'weather/location': [
-            weather_location('5d6b7a2e-3c41-4b6e-9a3f-1f0c2b7d8e90', 'Palo Alto', 18, 17, 22, 11, 'partly_cloudy',
+            weather_location(PALO_ALTO_ID, 'Palo Alto', 18, 17, 22, 11, 'partly_cloudy',
                              'Partly cloudy, high of 22°C.', uv=5, precip=10),
-            weather_location('0c9e4f1a-7b2d-4e8a-b6c3-9d1e2f3a4b5c', 'London', 12, 10, 14, 8, 'light_rain',
+            weather_location(LONDON_ID, 'London', 12, 10, 14, 8, 'light_rain',
                              'Light rain through the evening.', uv=1, precip=70),
         ],
         'weather/hour': [weather_hour(i, t, c) for i, (t, c) in enumerate([
@@ -267,6 +287,23 @@ def default_fixtures(now=None):
             app_setting('qlComboUpDown', 'Quick Launch: Hold Combo Up+Down', ''),
             app_setting('qlSingleClickUp', 'Quick Launch: Tap Up', HEALTH_APP_UUID),
             app_setting('qlSingleClickDown', 'Quick Launch: Tap Down', TIMELINE_FUTURE_UUID),
+        ],
+        'preferences/units': [{'instanceId': 'units', 'properties': {
+            'locale': short('en-US'), 'temperature': short('°C'), 'distance': short('km'),
+            'wind_speed': short('km/h'), 'pressure': short('hPa'), 'precipitation': short('mm'),
+            'clock': short('24h'),
+        }}],
+        # The app's own defaults, until the user picks theirs.
+        'preferences/complications': [
+            complication(0, 'weather', 'location', 0, 'temperature'),
+            complication(1, 'phone', 'phone_state', 0, 'battery_level'),
+            complication(2, 'calendar', 'event', 0, 'starts_at'),
+            complication(3, 'weather', 'location', 0, 'condition'),
+        ],
+        # The same places, under the same ids, as weather/location.
+        'preferences/weather_location': [
+            saved_location(PALO_ALTO_ID, 'Palo Alto', 37.4419, -122.1430),
+            saved_location(LONDON_ID, 'London', 51.5072, -0.1276),
         ],
     }
 
@@ -601,5 +638,19 @@ def builtin_plugins(store, runner):
                                                      'condition': ['shortText', 'icon', 'image'],
                                                      'condition_code': ['longText']},
                                refresh=900, multiple=True, permissions=['Location'])],
+                      [], store),
+        FixturePlugin('00000000-0000-0000-0001-000000000009', 'Preferences',
+                      "The user's units and locale, the readings they want in complication slots, and their "
+                      "weather locations.",
+                      [_source('preferences', ['units'], {name: ['shortText'] for name in (
+                          'locale', 'temperature', 'distance', 'wind_speed', 'pressure', 'precipitation', 'clock')}),
+                       _source('preferences', ['complications'], {'category': ['shortText'], 'item': ['shortText'],
+                                                                  'index': ['numericValue'],
+                                                                  'property': ['shortText']}, multiple=True),
+                       _source('preferences', ['weather_location'], {'name': ['shortText'],
+                                                                     'latitude': ['numericValue'],
+                                                                     'longitude': ['numericValue'],
+                                                                     'current': ['boolean']},
+                               multiple=True, permissions=['Location'])],
                       [], store),
     ]

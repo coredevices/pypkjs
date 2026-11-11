@@ -101,7 +101,7 @@ def test_builtins_enumerate_in_the_apps_order():
     logs = run_js("console.log('P', JSON.stringify(Pebble.enumeratePlugins().map(function (p) { return p.name; })));",
                   secs=0.3)
     assert tagged(logs, 'P') == [['Phone', 'Calendar', 'Watch Settings', 'Watch State', 'Music', 'Notifications',
-                                  'Weather']]
+                                  'Weather', 'Preferences']]
 
 
 def test_weather_declarations_match_the_app():
@@ -245,3 +245,46 @@ def test_websocket_command_sets_and_resets_a_source():
     assert battery_levels(logs) == ['87%', '12%', '87%']
     replies = [line for line in logs if line.startswith('WS ')]
     assert replies[:2] == ['WS 0', 'WS 0'] and replies[2].startswith('WS 1 Expecting property name')
+
+
+# ---------------------------------------------------------------------------- preferences
+
+def complication_slots(logs):
+    return [[(i['instanceId'], i['properties']['category']['shortText']['text'],
+              i['properties']['item']['shortText']['text'], i['properties']['index']['numericValue']['value'],
+              i['properties']['property']['shortText']['text']) for i in e['instances']]
+            for e in tagged(logs, 'D')]
+
+
+def test_complications_default_to_the_apps():
+    logs = run_js(subscribe('preferences', 'complications'), secs=0.5)
+    assert complication_slots(logs) == [[
+        ('0', 'weather', 'location', 0, 'temperature'), ('1', 'phone', 'phone_state', 0, 'battery_level'),
+        ('2', 'calendar', 'event', 0, 'starts_at'), ('3', 'weather', 'location', 0, 'condition'),
+    ]]
+
+
+def test_websocket_command_sets_the_complications():
+    slot = {'instanceId': '0', 'properties': {
+        'category': {'shortText': {'text': 'demo'}}, 'item': {'shortText': {'text': 'hello'}},
+        'index': {'numericValue': {'value': 0}}, 'property': {'shortText': {'text': 'message'}}}}
+    logs = run_js(subscribe('preferences', 'complications'), secs=1.0, ws_commands=[
+        [0.3, '\x01' + json.dumps({'source': 'preferences/complications', 'instances': [slot]})],
+    ])
+    assert complication_slots(logs)[-1] == [('0', 'demo', 'hello', 0, 'message')]
+
+
+def test_units_and_weather_locations():
+    logs = run_js(subscribe('preferences', 'units') + subscribe('preferences', 'weather_location')
+                  + subscribe('weather', 'location'), secs=0.5)
+    by_plugin = {}
+    for envelope in tagged(logs, 'D'):
+        by_plugin.setdefault(envelope['pluginUuid'], []).append(envelope['instances'])
+    units, places = by_plugin['00000000-0000-0000-0001-000000000009']
+    if units[0]['instanceId'] != 'units':
+        units, places = places, units
+    assert units[0]['properties']['temperature'] == {'shortText': {'text': '°C'}}
+    assert units[0]['properties']['clock'] == {'shortText': {'text': '24h'}}
+    weather, = by_plugin['00000000-0000-0000-0001-000000000002']
+    assert [p['instanceId'] for p in places] == [w['instanceId'] for w in weather]
+    assert places[1]['properties']['name'] == {'shortText': {'text': 'London'}}
