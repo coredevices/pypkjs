@@ -35,6 +35,11 @@ Then you can use the standard `pebble` command, giving `--phone localhost`, like
 
     pebble install --phone localhost --logs
 
+The firmware takes the Pebble protocol on its console too, and the emulator port of recent
+firmwares may not take it at all. Give `--console host:port` with where QEMU serves the
+console, and the protocol goes there when the firmware answers on it; the QEMU port keeps
+carrying what drives the emulator, and the protocol too for firmwares that predate this.
+
 Configuration Pages
 -------------------
 

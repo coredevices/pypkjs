@@ -6,22 +6,28 @@ import logging
 import uuid
 
 from libpebble2.communication import PebbleConnection
-from libpebble2.communication.transports.qemu import QemuTransport, MessageTargetQemu
+from libpebble2.communication.transports.qemu import MessageTargetQemu
 from libpebble2.communication.transports.qemu.protocol import QemuBluetoothConnection
 from libpebble2.protocol.apps import *
 from libpebble2.protocol.legacy2 import LegacyAppLaunchMessage
 from libpebble2.services.appmessage import AppMessageService, Uint8
 from libpebble2.services.blobdb import BlobDBClient
 
+from .emulator_transport import EmulatorTransport
+
 logger = logging.getLogger("pypkjs.pebble_manager")
 
 
 class PebbleManager(object):
-    def __init__(self, qemu):
+    def __init__(self, qemu, console=None):
         self.qemu = qemu.split(':')
         print(self.qemu)
         self.qemu[1] = int(self.qemu[1])
-        self.pebble = PebbleConnection(QemuTransport(*self.qemu), log_packet_level=logging.DEBUG)
+        if console is not None:
+            host, _, port = console.rpartition(':')
+            console = (host or '127.0.0.1', int(port))
+        self.pebble = PebbleConnection(EmulatorTransport(*self.qemu, console=console),
+                                       log_packet_level=logging.DEBUG)
         self.handle_start = None
         self.handle_stop = None
         self.blobdb = None
