@@ -41,9 +41,9 @@ class Runner(object):
         return not pbw.prefixes and manifests.loadable_plugin(pbw.manifest) is not None
 
     def __init__(self, qemu, pbws, persist_dir=None, oauth_token=None, layout_file=None, block_private_addresses=False,
-                 plugin_fixtures=None):
+                 plugin_fixtures=None, console=None):
         self.qemu = qemu
-        self.pebble = PebbleManager(qemu)
+        self.pebble = PebbleManager(qemu, console=console)
         self.persist_dir = persist_dir
         self.oauth_token = oauth_token
         self.pebble.handle_start = self.handle_start

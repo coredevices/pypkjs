@@ -51,7 +51,7 @@ class Websocket(object):
 
 class WebsocketRunner(Runner):
     def __init__(self, qemu, pbws, port, token=None, ssl_root=None, persist_dir=None, oauth_token=None,
-                 layout_file=None, block_private_addresses=False, plugin_fixtures=None):
+                 layout_file=None, block_private_addresses=False, plugin_fixtures=None, console=None):
         self.port = port
         self.token = token
         self.requires_auth = (token is not None)
@@ -62,7 +62,7 @@ class WebsocketRunner(Runner):
         self.config_callback = None
         super(WebsocketRunner, self).__init__(qemu, pbws, persist_dir=persist_dir, oauth_token=oauth_token,
                                               layout_file=layout_file, block_private_addresses=block_private_addresses,
-                                              plugin_fixtures=plugin_fixtures)
+                                              plugin_fixtures=plugin_fixtures, console=console)
 
     def run(self):
         pebble_greenlet = self.pebble.connect()
@@ -352,6 +352,9 @@ def run_tool():
     parser = argparse.ArgumentParser(description='Emulate a phone running the Pebble app')
     parser.add_argument('--version', action='version', version=version_string)
     parser.add_argument('--qemu', default='127.0.0.1:12344', help="Location of qemu bluetooth socket")
+    parser.add_argument('--console', default=None,
+                        help="Location of the firmware's console, for the Pebble protocol. A firmware that "
+                             "does not take it there gets it on the qemu bluetooth socket.")
     parser.add_argument('--port', default=9000, type=int, help="Port for phone websocket to listen on")
     parser.add_argument('--token', help="Token for the websocket to require as authentication")
     parser.add_argument('--ssl-root', help="Root for SSL certs, containing server-cert.pem and server-key.pem")
@@ -373,7 +376,7 @@ def run_tool():
     runner = WebsocketRunner(args.qemu,args.pbws, args.port, token=args.token, ssl_root=args.ssl_root,
                              persist_dir=args.persist, oauth_token=args.oauth, layout_file=args.layout,
                              block_private_addresses=args.block_private_addresses,
-                             plugin_fixtures=args.plugin_fixtures)
+                             plugin_fixtures=args.plugin_fixtures, console=args.console)
     runner.run()
     # The quickjs-ng extension deadlocks against gevent's hub during interpreter
     # shutdown (see pypkjs/javascript/qjs.py), so shut the JS runtime down
